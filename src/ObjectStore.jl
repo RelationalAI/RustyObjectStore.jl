@@ -1,6 +1,6 @@
 module ObjectStore
 
-const rust_lib_dir = @static if Sys.islinux()
+const rust_lib_dir = @static if Sys.islinux() || Sys.isapple()
     joinpath(
         @__DIR__,
         "..",
@@ -8,18 +8,6 @@ const rust_lib_dir = @static if Sys.islinux()
         "rust_store",
         "target",
         "release",
-    )
-elseif Sys.isapple()
-    # the release target lives in a different directory because MacOS is built
-    # with Rosetta/i386
-    joinpath(
-        @__DIR__,
-        "..",
-        "deps",
-        "rust_store",
-        "target",
-        "x86_64-apple-darwin",
-        "release"
     )
 elseif Sys.iswindows()
     @warn("The rust-store library is currently unsupported on Windows.")
