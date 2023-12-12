@@ -75,4 +75,6 @@ Azurite.with(; debug=true, public=false) do conf
 
     #     nbytes_read = blob_get!(joinpath(base_url, "test100B.csv"), buffer, credentials)
     # end
+end # Azurite.with
+
 end # @testitem
