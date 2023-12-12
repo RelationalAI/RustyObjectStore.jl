@@ -1,5 +1,7 @@
 module ObjectStore
 
+export init_rust_store, blob_get!, blob_put!, AzureCredentials
+
 const rust_lib_dir = @static if Sys.islinux()
     joinpath(
         @__DIR__,
@@ -35,14 +37,16 @@ end
 
 const rust_lib = joinpath(rust_lib_dir, "librust_store.$extension")
 
-RUST_STORE_STARTED = false
+const RUST_STORE_STARTED = Ref(false)
+const _INIT_LOCK::ReentrantLock = ReentrantLock()
 function init_rust_store()
-    global RUST_STORE_STARTED
-    if RUST_STORE_STARTED
+    Base.@lock _INIT_LOCK begin
+        if RUST_STORE_STARTED[]
         return
     end
     @ccall rust_lib.start()::Cint
-    RUST_STORE_STARTED = true
+        RUST_STORE_STARTED[] = true
+    end
 end
 
 struct AzureCredentials
