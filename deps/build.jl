@@ -44,9 +44,7 @@ rust_source = joinpath(@__DIR__, "rust_store")
 ENV["RUSTFLAGS"]="-Awarnings"
 # build release
 cd(rust_source)
-if Sys.islinux()
+if Sys.islinux() || Sys.isapple()
     run(`cargo build --release`)
-elseif Sys.isapple()
-    run(`cargo build --release --target=x86_64-apple-darwin`)
 end
 # rm("target/.rustc_info.json" ; force=true)

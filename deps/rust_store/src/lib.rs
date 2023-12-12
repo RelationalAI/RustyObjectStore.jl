@@ -228,6 +228,7 @@ pub extern "C" fn start() -> CResult {
                                         let bytes_sent = Arc::clone(&bytes_sent);
                                         tokio::spawn(async move {
                                             let mut received_bytes = 0;
+                                            let mut failed = false;
                                             for chunk in chunks {
                                                 let chunk = match chunk {
                                                     Ok(c) => c,
@@ -236,11 +237,20 @@ pub extern "C" fn start() -> CResult {
                                                     }
                                                 };
                                                 let len = chunk.len();
+
+                                                if (received_bytes + len > slice.len()) {
+                                                    response._error("Supplied buffer was too small");
+                                                    failed = true;
+                                                    break;
+                                                }
+
                                                 slice[received_bytes..(received_bytes + len)].copy_from_slice(&chunk);
                                                 received_bytes += len;
                                             }
                                             bytes_sent.fetch_add(received_bytes, Ordering::AcqRel);
-                                            response.success(received_bytes);
+                                            if (!failed) {
+                                                response.success(received_bytes);
+                                            }
                                             notifier.notify();
                                         });
                                     }

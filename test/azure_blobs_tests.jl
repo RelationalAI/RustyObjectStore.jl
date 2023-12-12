@@ -63,18 +63,37 @@ Azurite.with(; debug=true, public=false) do conf
         @test String(buffer[1:nbytes_read]) == input
     end
 
-    # If the buffer is too small, we hang
-    # @testset "100B file, buffer too small" begin
-    #     input = "1,2,3,4,5,6,7,8,9,1\n" ^ 5
-    #     buffer = Vector{UInt8}(undef, 10)
-    #     @assert sizeof(input) == 100
-    #     @assert sizeof(buffer) < sizeof(input)
+    @testset "100B file, buffer too small" begin
+        input = "1,2,3,4,5,6,7,8,9,1\n" ^ 5
+        buffer = Vector{UInt8}(undef, 10)
+        @assert sizeof(input) == 100
+        @assert sizeof(buffer) < sizeof(input)
 
-    #     nbytes_written = blob_put(joinpath(base_url, "test100B.csv"), codeunits(input), credentials)
-    #     @test nbytes_written == 100
+        nbytes_written = blob_put(joinpath(base_url, "test100B.csv"), codeunits(input), credentials)
+        @test nbytes_written == 100
 
-    #     nbytes_read = blob_get!(joinpath(base_url, "test100B.csv"), buffer, credentials)
-    # end
+        try
+            nbytes_read = blob_get!(joinpath(base_url, "test100B.csv"), buffer, credentials)
+            @test false
+        catch err
+            @test err isa ErrorException
+        end
+    end
+
+    @testset "10B file, exactly sized buffer" begin
+        input = "0123456789"
+        buffer = Vector{UInt8}(undef, 10)
+        @assert sizeof(input) == 10
+        @assert sizeof(buffer) == sizeof(input)
+
+        nbytes_written = blob_put(joinpath(base_url, "testexact.csv"), codeunits(input), credentials)
+        @test nbytes_written == 10
+
+        nbytes_read = blob_get!(joinpath(base_url, "testexact.csv"), buffer, credentials)
+        @test nbytes_read == 10
+        @test String(buffer[1:nbytes_read]) == input
+    end
+
 end # Azurite.with
 
 end # @testitem
