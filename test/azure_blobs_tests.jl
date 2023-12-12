@@ -1,7 +1,7 @@
 @testitem "Basic BlobStorage tests" begin
 
 using CloudBase.CloudTest: Azurite
-using ObjectStore: blob_get!, blob_put!, AzureCredentials
+using ObjectStore: blob_get!, blob_put, AzureCredentials
 import ObjectStore
 
 ObjectStore.init_rust_store()
@@ -10,13 +10,13 @@ ObjectStore.init_rust_store()
 # conf, p = Azurite.run(; debug=true); atexit(() -> kill(p))
 Azurite.with(; debug=true, public=false) do conf
     _credentials, _container = conf
-    base_url = @something(_container.baseurl, "")
+    base_url = _container.baseurl
     credentials = AzureCredentials(_credentials.auth.account, _container.name, _credentials.auth.key, base_url)
 
     @testset "0B file" begin
         buffer = Vector{UInt8}(undef, 1000)
 
-        nbytes_written = blob_put!(joinpath(base_url, "empty.csv"), codeunits(""), credentials)
+        nbytes_written = blob_put(joinpath(base_url, "empty.csv"), codeunits(""), credentials)
         @test nbytes_written == 0
 
         nbytes_read = blob_get!(joinpath(base_url, "empty.csv"), buffer, credentials)
@@ -29,7 +29,7 @@ Azurite.with(; debug=true, public=false) do conf
         @assert sizeof(input) == 100
         @assert sizeof(buffer) > sizeof(input)
 
-        nbytes_written = blob_put!(joinpath(base_url, "test100B.csv"), codeunits(input), credentials)
+        nbytes_written = blob_put(joinpath(base_url, "test100B.csv"), codeunits(input), credentials)
         @test nbytes_written == 100
 
         nbytes_read = blob_get!(joinpath(base_url, "test100B.csv"), buffer, credentials)
@@ -42,7 +42,7 @@ Azurite.with(; debug=true, public=false) do conf
         buffer = Vector{UInt8}(undef, 1_000_000)
         @assert sizeof(input) == 1_000_000 == sizeof(buffer)
 
-        nbytes_written = blob_put!(joinpath(base_url, "test100B.csv"), codeunits(input), credentials)
+        nbytes_written = blob_put(joinpath(base_url, "test100B.csv"), codeunits(input), credentials)
         @test nbytes_written == 1_000_000
 
         nbytes_read = blob_get!(joinpath(base_url, "test100B.csv"), buffer, credentials)
@@ -55,7 +55,7 @@ Azurite.with(; debug=true, public=false) do conf
         buffer = Vector{UInt8}(undef, 20_000_000)
         @assert sizeof(input) == 20_000_000 == sizeof(buffer)
 
-        nbytes_written = blob_put!(joinpath(base_url, "test100B.csv"), codeunits(input), credentials)
+        nbytes_written = blob_put(joinpath(base_url, "test100B.csv"), codeunits(input), credentials)
         @test nbytes_written == 20_000_000
 
         nbytes_read = blob_get!(joinpath(base_url, "test100B.csv"), buffer, credentials)
@@ -70,7 +70,7 @@ Azurite.with(; debug=true, public=false) do conf
     #     @assert sizeof(input) == 100
     #     @assert sizeof(buffer) < sizeof(input)
 
-    #     nbytes_written = blob_put!(joinpath(base_url, "test100B.csv"), codeunits(input), credentials)
+    #     nbytes_written = blob_put(joinpath(base_url, "test100B.csv"), codeunits(input), credentials)
     #     @test nbytes_written == 100
 
     #     nbytes_read = blob_get!(joinpath(base_url, "test100B.csv"), buffer, credentials)

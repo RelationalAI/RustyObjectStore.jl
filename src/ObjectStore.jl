@@ -1,6 +1,6 @@
 module ObjectStore
 
-export init_rust_store, blob_get!, blob_put!, AzureCredentials
+export init_rust_store, blob_get!, blob_put, AzureCredentials
 
 const rust_lib_dir = @static if Sys.islinux()
     joinpath(
@@ -117,7 +117,7 @@ function blob_get!(path::String, buffer::AbstractVector{UInt8}, credentials::Azu
     end
 end
 
-function blob_put!(path::String, buffer::AbstractVector{UInt8}, credentials::AzureCredentials)
+function blob_put(path::String, buffer::AbstractVector{UInt8}, credentials::AzureCredentials)
     response = Ref(Response())
     size = length(buffer)
     cond = Base.AsyncCondition()
