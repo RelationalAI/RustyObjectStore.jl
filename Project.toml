@@ -1,3 +1,17 @@
 name = "ObjectStore"
 uuid = "1b5eed3d-1f46-4baa-87f3-a4a892b23610"
 version = "0.1.0"
+
+[compat]
+CloudBase = "1"
+ReTestItems = "1"
+Test = "1"
+julia = "1.8"
+
+[extras]
+CloudBase = "85eb1798-d7c4-4918-bb13-c944d38e27ed"
+ReTestItems = "817f1d60-ba6b-4fd5-9520-3cf149f6a823"
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["CloudBase", "ReTestItems", "Test"]

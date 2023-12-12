@@ -1,5 +1,8 @@
 module ObjectStore
 
+
+export init_rust_store, blob_get!, blob_put, AzureCredentials
+
 const rust_lib_dir = @static if Sys.islinux() || Sys.isapple()
     joinpath(
         @__DIR__,
@@ -23,14 +26,16 @@ end
 
 const rust_lib = joinpath(rust_lib_dir, "librust_store.$extension")
 
-RUST_STORE_STARTED = false
+const RUST_STORE_STARTED = Ref(false)
+const _INIT_LOCK::ReentrantLock = ReentrantLock()
 function init_rust_store()
-    global RUST_STORE_STARTED
-    if RUST_STORE_STARTED
-        return
+    Base.@lock _INIT_LOCK begin
+        if RUST_STORE_STARTED[]
+            return
+        end
+        @ccall rust_lib.start()::Cint
+        RUST_STORE_STARTED[] = true
     end
-    @ccall rust_lib.start()::Cint
-    RUST_STORE_STARTED = true
 end
 
 struct AzureCredentials
@@ -39,23 +44,22 @@ struct AzureCredentials
     key::String
     host::String
 end
+const _AzureCredentialsFFI = NTuple{4,Cstring}
 
-struct AzureCredentialsFFI
-    account::Cstring
-    container::Cstring
-    key::Cstring
-    host::Cstring
-end
-
-function to_ffi(credentials::AzureCredentials)
-    AzureCredentialsFFI(
+function Base.cconvert(::Type{Ref{AzureCredentials}}, credentials::AzureCredentials)
+   credentials_ffi = (
         Base.unsafe_convert(Cstring, Base.cconvert(Cstring, credentials.account)),
         Base.unsafe_convert(Cstring, Base.cconvert(Cstring, credentials.container)),
         Base.unsafe_convert(Cstring, Base.cconvert(Cstring, credentials.key)),
         Base.unsafe_convert(Cstring, Base.cconvert(Cstring, credentials.host))
-    )
+    )::_AzureCredentialsFFI
+    # cconvert ensures its outputs are preserved during a ccall, so we can crate a pointer
+    # safely in the unsafe_convert call.
+    return credentials_ffi, Ref(credentials_ffi)
 end
-
+function Base.unsafe_convert(::Type{Ref{AzureCredentials}}, x::Tuple{T,Ref{T}}) where {T<:_AzureCredentialsFFI}
+    return Base.unsafe_convert(Ptr{_AzureCredentialsFFI}, x[2])
+end
 
 struct Response
     result::Cint
@@ -67,7 +71,6 @@ end
 
 function blob_get!(path::String, buffer::AbstractVector{UInt8}, credentials::AzureCredentials)
     response = Ref(Response())
-    credentials_ffi = Ref(to_ffi(credentials))
     size = length(buffer)
     cond = Base.AsyncCondition()
     cond_handle = cond.handle
@@ -76,7 +79,7 @@ function blob_get!(path::String, buffer::AbstractVector{UInt8}, credentials::Azu
             path::Cstring,
             buffer::Ref{Cuchar},
             size::Culonglong,
-            credentials_ffi::Ref{AzureCredentialsFFI},
+            credentials::Ref{AzureCredentials},
             response::Ref{Response},
             cond_handle::Ptr{Cvoid}
         )::Cint
@@ -103,9 +106,8 @@ function blob_get!(path::String, buffer::AbstractVector{UInt8}, credentials::Azu
     end
 end
 
-function blob_put!(path::String, buffer::AbstractVector{UInt8}, credentials::AzureCredentials)
+function blob_put(path::String, buffer::AbstractVector{UInt8}, credentials::AzureCredentials)
     response = Ref(Response())
-    credentials_ffi = Ref(to_ffi(credentials))
     size = length(buffer)
     cond = Base.AsyncCondition()
     cond_handle = cond.handle
@@ -114,7 +116,7 @@ function blob_put!(path::String, buffer::AbstractVector{UInt8}, credentials::Azu
             path::Cstring,
             buffer::Ref{Cuchar},
             size::Culonglong,
-            credentials_ffi::Ref{AzureCredentialsFFI},
+            credentials::Ref{AzureCredentials},
             response::Ref{Response},
             cond_handle::Ptr{Cvoid}
         )::Cint
