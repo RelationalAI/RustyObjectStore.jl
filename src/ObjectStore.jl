@@ -4,9 +4,8 @@ const rust_lib_dir = @static if Sys.islinux()
     joinpath(
         @__DIR__,
         "..",
-        "..",
         "deps",
-        "rust-store",
+        "rust_store",
         "target",
         "release",
     )
@@ -16,9 +15,8 @@ elseif Sys.isapple()
     joinpath(
         @__DIR__,
         "..",
-        "..",
         "deps",
-        "rust-store",
+        "rust_store",
         "target",
         "x86_64-apple-darwin",
         "release"
