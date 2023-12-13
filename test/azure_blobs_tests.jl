@@ -4,7 +4,7 @@ using CloudBase.CloudTest: Azurite
 using ObjectStore: blob_get!, blob_put, AzureCredentials
 import ObjectStore
 
-ObjectStore.init_rust_store()
+ObjectStore.init_rust_store(RustStoreConfig(5, 10))
 
 # For interactive testing, use Azurite.run() instead of Azurite.with()
 # conf, p = Azurite.run(; debug=true); atexit(() -> kill(p))
