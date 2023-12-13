@@ -1,7 +1,7 @@
 module ObjectStore
 
 
-export init_rust_store, blob_get!, blob_put, AzureCredentials
+export init_rust_store, blob_get!, blob_put, AzureCredentials, RustStoreConfig
 
 const rust_lib_dir = @static if Sys.islinux() || Sys.isapple()
     joinpath(
@@ -42,7 +42,6 @@ function init_rust_store(config::RustStoreConfig = RustStoreConfig(15, 150))
         RUST_STORE_STARTED[] = true
     end
 end
-
 
 struct AzureCredentials
     account::String
