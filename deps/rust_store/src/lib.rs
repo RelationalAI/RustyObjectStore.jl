@@ -238,7 +238,7 @@ pub extern "C" fn start() -> CResult {
                                                 };
                                                 let len = chunk.len();
 
-                                                if (received_bytes + len > slice.len()) {
+                                                if received_bytes + len > slice.len() {
                                                     response._error("Supplied buffer was too small");
                                                     failed = true;
                                                     break;
@@ -248,7 +248,7 @@ pub extern "C" fn start() -> CResult {
                                                 received_bytes += len;
                                             }
                                             bytes_sent.fetch_add(received_bytes, Ordering::AcqRel);
-                                            if (!failed) {
+                                            if !failed {
                                                 response.success(received_bytes);
                                             }
                                             notifier.notify();
@@ -291,7 +291,7 @@ pub extern "C" fn start() -> CResult {
                         let mut tries = 10;
                         loop {
                             match client.put(&p, slice.into()).await {
-                                Ok(()) => {
+                                Ok(_) => {
                                     bytes_sent.fetch_add(len, Ordering::AcqRel);
                                     response.success(len);
                                     notifier.notify();
