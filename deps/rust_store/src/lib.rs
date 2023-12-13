@@ -20,6 +20,7 @@ static RT: Lazy<Runtime> = Lazy::new(|| tokio::runtime::Runtime::new()
         .expect("could not initialize tokio runtime"));
 static SQ: OnceCell<async_channel::Sender<Request>> = OnceCell::new();
 static CLIENTS: Lazy<Cache<u64, Arc<dyn ObjectStore>>> = Lazy::new(|| Cache::new(10));
+static CONFIG: OnceCell<GlobalConfigOptions> = OnceCell::new();
 
 fn sq() -> &'static async_channel::Sender<Request> {
     SQ.get().expect("runtime not started")
@@ -64,6 +65,12 @@ pub struct AzureCredentials {
     container: *const c_char,
     key: *const c_char,
     host: *const c_char
+}
+
+#[repr(C)]
+pub struct GlobalConfigOptions {
+    max_retries: usize,
+    retry_timeout_sec: u64
 }
 
 impl AzureCredentials {
@@ -136,7 +143,9 @@ pub async fn connect_and_test(credentials: &AzureCredentials) -> anyhow::Result<
         .with_account(account)
         .with_container_name(container)
         .with_access_key(key)
-        .with_retry(object_store::RetryConfig { max_retries: 15, retry_timeout: std::time::Duration::from_secs(150), ..Default::default() })
+        .with_retry(object_store::RetryConfig {
+            max_retries: CONFIG.get().unwrap().max_retries,
+            retry_timeout: std::time::Duration::from_secs(CONFIG.get().unwrap().retry_timeout_sec), ..Default::default() })
         .with_client_options(object_store::ClientOptions::new()
             .with_timeout(std::time::Duration::from_secs(20))
             .with_connect_timeout(std::time::Duration::from_secs(10))
@@ -171,8 +180,10 @@ pub async fn connect_and_test(credentials: &AzureCredentials) -> anyhow::Result<
 }
 
 #[no_mangle]
-pub extern "C" fn start() -> CResult {
+pub extern "C" fn start(config: GlobalConfigOptions) -> CResult {
+    let _ = CONFIG.set(config);
     tracing_subscriber::fmt::init();
+
     RT.spawn(async move {
         let (tx, rx) = async_channel::bounded(16 * 1024);
         SQ.set(tx).expect("runtime already started");

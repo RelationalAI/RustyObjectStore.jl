@@ -26,17 +26,23 @@ end
 
 const rust_lib = joinpath(rust_lib_dir, "librust_store.$extension")
 
+struct RustStoreConfig
+    max_retries::Culonglong
+    retry_timeout_sec::Culonglong
+end
+
 const RUST_STORE_STARTED = Ref(false)
 const _INIT_LOCK::ReentrantLock = ReentrantLock()
-function init_rust_store()
+function init_rust_store(config::RustStoreConfig = RustStoreConfig(15, 150))
     Base.@lock _INIT_LOCK begin
         if RUST_STORE_STARTED[]
             return
         end
-        @ccall rust_lib.start()::Cint
+        @ccall rust_lib.start(config::RustStoreConfig)::Cint
         RUST_STORE_STARTED[] = true
     end
 end
+
 
 struct AzureCredentials
     account::String
