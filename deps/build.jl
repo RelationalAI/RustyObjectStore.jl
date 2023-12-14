@@ -35,9 +35,14 @@ function assert_compatible_version(cmd::Cmd, version_specification::String)::Not
 end
 
 # Only build Rust code if cargo exists and has a compatible version
-run(`which rustup`)
+print("`which rustup`: "); flush(stdout)
+run(pipeline(`which rustup`, stdout=stderr))
+run(pipeline(`rustup self update`, stdout=stderr))
+# run(`which rustup self update`)
 run(`rustup default stable`)
-run(`which cargo`)
+print("`which cargo`: "); flush(stdout)
+
+run(pipeline(`which cargo`, stdout=stderr))
 assert_compatible_version(`cargo -V`, "1.55.0")
 rust_source = joinpath(@__DIR__, "rust_store")
 # Elide rust warnings - they aren't helpful in this context
