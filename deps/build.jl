@@ -37,7 +37,7 @@ end
 # Only build Rust code if cargo exists and has a compatible version
 print("`which rustup`: "); flush(stdout)
 run(pipeline(`which rustup`, stdout=stderr))
-run(pipeline(`rustup self update`, stdout=stderr))
+run(pipeline(`rustup toolchain install stable --no-self-update`, stdout=stderr))
 # run(`which rustup self update`)
 run(`rustup default stable`)
 print("`which cargo`: "); flush(stdout)
