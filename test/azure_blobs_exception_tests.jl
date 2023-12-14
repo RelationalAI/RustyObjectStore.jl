@@ -1,10 +1,7 @@
-@testitem "Basic BlobStorage exceptions" begin
+@testitem "Basic BlobStorage exceptions" setup=[InitializeRustStore] begin
     using CloudBase.CloudTest: Azurite
     import CloudBase
     using ObjectStore: blob_get!, blob_put, AzureCredentials
-    import ObjectStore
-
-    ObjectStore.init_rust_store()
 
     # For interactive testing, use Azurite.run() instead of Azurite.with()
     # conf, p = Azurite.run(; debug=true, public=false); atexit(() -> kill(p))
