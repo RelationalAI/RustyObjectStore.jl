@@ -49,6 +49,14 @@ struct AzureCredentials
     key::String
     host::String
 end
+function Base.show(io::IO, credentials::AzureCredentials)
+    print(io, "AzureCredentials("),
+    print(io, repr(credentials.account), ", ")
+    print(io, repr(credentials.container), ", ")
+    print(io, "\"*****\", ") # don't print the secret key
+    print(io, repr(credentials.host), ")")
+end
+
 const _AzureCredentialsFFI = NTuple{4,Cstring}
 
 function Base.cconvert(::Type{Ref{AzureCredentials}}, credentials::AzureCredentials)
