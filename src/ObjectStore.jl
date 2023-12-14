@@ -1,30 +1,31 @@
 module ObjectStore
 
+using rust_store_jll
 
 export init_rust_store, blob_get!, blob_put, AzureCredentials, RustStoreConfig
 
-const rust_lib_dir = @static if Sys.islinux() || Sys.isapple()
-    joinpath(
-        @__DIR__,
-        "..",
-        "deps",
-        "rust_store",
-        "target",
-        "release",
-    )
-elseif Sys.iswindows()
-    @warn("The rust-store library is currently unsupported on Windows.")
-end
+# const rust_lib_dir = @static if Sys.islinux() || Sys.isapple()
+#     joinpath(
+#         @__DIR__,
+#         "..",
+#         "deps",
+#         "rust_store",
+#         "target",
+#         "release",
+#     )
+# elseif Sys.iswindows()
+#     @warn("The rust-store library is currently unsupported on Windows.")
+# end
 
-const extension = @static if Sys.islinux()
-    "so"
-elseif Sys.isapple()
-    "dylib"
-elseif Sys.iswindows()
-    "dll"
-end
+# const extension = @static if Sys.islinux()
+#     "so"
+# elseif Sys.isapple()
+#     "dylib"
+# elseif Sys.iswindows()
+#     "dll"
+# end
 
-const rust_lib = joinpath(rust_lib_dir, "librust_store.$extension")
+# const rust_lib = joinpath(rust_lib_dir, "librust_store.$extension")
 
 struct RustStoreConfig
     max_retries::Culonglong
@@ -38,7 +39,7 @@ function init_rust_store(config::RustStoreConfig = RustStoreConfig(15, 150))
         if RUST_STORE_STARTED[]
             return
         end
-        res = @ccall rust_lib.start(config::RustStoreConfig)::Cint
+        res = @ccall librust_store.start(config::RustStoreConfig)::Cint
         if res != 0
             error("Failed to init_rust_store")
         end
@@ -91,7 +92,7 @@ function blob_get!(path::String, buffer::AbstractVector{UInt8}, credentials::Azu
     cond = Base.AsyncCondition()
     cond_handle = cond.handle
     while true
-        res = @ccall rust_lib.perform_get(
+        res = @ccall librust_store.perform_get(
             path::Cstring,
             buffer::Ref{Cuchar},
             size::Culonglong,
@@ -114,7 +115,7 @@ function blob_get!(path::String, buffer::AbstractVector{UInt8}, credentials::Azu
         response = response[]
         if response.result == 1
             err = "failed to process get with error: $(unsafe_string(response.error_message))"
-            @ccall rust_lib.destroy_cstring(response.error_message::Ptr{Cchar})::Cint
+            @ccall librust_store.destroy_cstring(response.error_message::Ptr{Cchar})::Cint
             error(err)
         end
 
@@ -128,7 +129,7 @@ function blob_put(path::String, buffer::AbstractVector{UInt8}, credentials::Azur
     cond = Base.AsyncCondition()
     cond_handle = cond.handle
     while true
-        res = @ccall rust_lib.perform_put(
+        res = @ccall librust_store.perform_put(
             path::Cstring,
             buffer::Ref{Cuchar},
             size::Culonglong,
@@ -151,7 +152,7 @@ function blob_put(path::String, buffer::AbstractVector{UInt8}, credentials::Azur
         response = response[]
         if response.result == 1
             err = "failed to process put with error: $(unsafe_string(response.error_message))"
-            @ccall rust_lib.destroy_cstring(response.error_message::Ptr{Cchar})::Cint
+            @ccall librust_store.destroy_cstring(response.error_message::Ptr{Cchar})::Cint
             error(err)
         end
 

@@ -2,6 +2,9 @@ name = "ObjectStore"
 uuid = "1b5eed3d-1f46-4baa-87f3-a4a892b23610"
 version = "0.1.0"
 
+[deps]
+rust_store_jll = "d3153661-548e-59ba-adcc-14d087a405cd"
+
 [compat]
 CloudBase = "1"
 ReTestItems = "1"
