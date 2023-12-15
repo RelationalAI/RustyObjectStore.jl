@@ -3,9 +3,11 @@ use futures_util::StreamExt;
 use once_cell::sync::Lazy;
 use once_cell::sync::OnceCell;
 use tokio::runtime::Runtime;
+use std::panic;
 use std::ffi::CStr;
 use std::ffi::CString;
 use std::ffi::{c_char, c_void};
+use std::os::raw::{c_int};
 use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
 
 use std::collections::hash_map::DefaultHasher;
@@ -21,10 +23,6 @@ static RT: Lazy<Runtime> = Lazy::new(|| tokio::runtime::Runtime::new()
 static SQ: OnceCell<async_channel::Sender<Request>> = OnceCell::new();
 static CLIENTS: Lazy<Cache<u64, Arc<dyn ObjectStore>>> = Lazy::new(|| Cache::new(10));
 static CONFIG: OnceCell<GlobalConfigOptions> = OnceCell::new();
-
-fn sq() -> &'static async_channel::Sender<Request> {
-    SQ.get().expect("runtime not started")
-}
 
 #[repr(C)]
 pub enum CResult {
@@ -180,7 +178,19 @@ pub async fn connect_and_test(credentials: &AzureCredentials) -> anyhow::Result<
 }
 
 #[no_mangle]
-pub extern "C" fn start(config: GlobalConfigOptions) -> CResult {
+pub extern "C" fn start(panic_handler: unsafe extern "C" fn(_:c_int)->c_int, config: GlobalConfigOptions) -> CResult {
+    let default_panic = std::panic::take_hook();
+    panic::set_hook(Box::new(move |info| {
+        //tracing::warn!("{:?}", info);
+        unsafe{
+            let _ = panic_handler(0);
+        }
+        // We don't expect the panic_handler callback to return to us, but if it does
+        // for some reason we should invoke the default handler to crash instead of
+        // continuing in an undefined state
+        default_panic(info);
+    }));
+
     let _ = CONFIG.set(config);
     tracing_subscriber::fmt::init();
 
@@ -353,13 +363,20 @@ pub extern "C" fn perform_get(
     let slice = unsafe { std::slice::from_raw_parts_mut(buffer, size) };
     let credentials = unsafe { & (*credentials) };
     let notifier = Notifier { handle };
-    match sq().try_send(Request::Get(path, slice, credentials, response, notifier)) {
-        Ok(_) => CResult::Ok,
-        Err(async_channel::TrySendError::Full(_)) => {
-            CResult::Backoff
+    match SQ.get() {
+        Some(sq) => {
+            match sq.try_send(Request::Get(path, slice, credentials, response, notifier)) {
+                Ok(_) => CResult::Ok,
+                Err(async_channel::TrySendError::Full(_)) => {
+                    CResult::Backoff
+                }
+                Err(async_channel::TrySendError::Closed(_)) => {
+                    CResult::Error
+                }
+            }
         }
-        Err(async_channel::TrySendError::Closed(_)) => {
-            CResult::Error
+        None => {
+            return CResult::Error;
         }
     }
 }
@@ -380,13 +397,20 @@ pub extern "C" fn perform_put(
     let slice = unsafe { std::slice::from_raw_parts(buffer, size) };
     let credentials = unsafe { & (*credentials) };
     let notifier = Notifier { handle };
-    match sq().try_send(Request::Put(path, slice, credentials, response, notifier)) {
-        Ok(_) => CResult::Ok,
-        Err(async_channel::TrySendError::Full(_)) => {
-            CResult::Backoff
+    match SQ.get() {
+        Some(sq) => {
+            match sq.try_send(Request::Put(path, slice, credentials, response, notifier)) {
+                Ok(_) => CResult::Ok,
+                Err(async_channel::TrySendError::Full(_)) => {
+                    CResult::Backoff
+                }
+                Err(async_channel::TrySendError::Closed(_)) => {
+                    CResult::Error
+                }
+            }
         }
-        Err(async_channel::TrySendError::Closed(_)) => {
-            CResult::Error
+        None => {
+            return CResult::Error;
         }
     }
 }

@@ -2,6 +2,7 @@
     using CloudBase.CloudTest: Azurite
     import CloudBase
     using ObjectStore: blob_get!, blob_put, AzureCredentials
+    import ObjectStore
 
     # For interactive testing, use Azurite.run() instead of Azurite.with()
     # conf, p = Azurite.run(; debug=true, public=false); atexit(() -> kill(p))
@@ -141,6 +142,18 @@
         catch e
             @test e isa ErrorException
             @test occursin("Connection refused", e.msg)
+        end
+    end
+
+    @testset "panic handle" begin
+        config = RustStoreConfig(5, 5)
+        try
+            @ccall ObjectStore.rust_lib.start(ObjectStore.panic_handler_c::Ptr{Cvoid},
+                        config::RustStoreConfig)::Cint
+            @test false # Should have thrown an error
+        catch e
+            @test e isa ErrorException
+            @test occursin("Rust panic", e.msg)
         end
     end
 end # @testitem
