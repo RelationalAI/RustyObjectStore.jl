@@ -2,44 +2,22 @@ module ObjectStore
 
 using rust_store_jll
 
+include("gen/lib_rust_store.jl")
+using .LibRustStore: GlobalConfigOptions, Response
+using .LibRustStore: perform_get, perform_put
+
 export init_rust_store, blob_get!, blob_put, AzureCredentials, RustStoreConfig
 
-# const rust_lib_dir = @static if Sys.islinux() || Sys.isapple()
-#     joinpath(
-#         @__DIR__,
-#         "..",
-#         "deps",
-#         "rust_store",
-#         "target",
-#         "release",
-#     )
-# elseif Sys.iswindows()
-#     @warn("The rust-store library is currently unsupported on Windows.")
-# end
-
-# const extension = @static if Sys.islinux()
-#     "so"
-# elseif Sys.isapple()
-#     "dylib"
-# elseif Sys.iswindows()
-#     "dll"
-# end
-
-# const rust_lib = joinpath(rust_lib_dir, "librust_store.$extension")
-
-struct RustStoreConfig
-    max_retries::Culonglong
-    retry_timeout_sec::Culonglong
-end
+const RustStoreConfig = LibRustStore.GlobalConfigOptions
 
 const RUST_STORE_STARTED = Ref(false)
 const _INIT_LOCK::ReentrantLock = ReentrantLock()
-function init_rust_store(config::RustStoreConfig = RustStoreConfig(15, 150))
+function init_rust_store(config::RustStoreConfig=RustStoreConfig(15, 150))
     Base.@lock _INIT_LOCK begin
         if RUST_STORE_STARTED[]
             return
         end
-        res = @ccall librust_store.start(config::RustStoreConfig)::Cint
+        res = LibRustStore.start(config)
         if res != 0
             error("Failed to init_rust_store")
         end
@@ -61,10 +39,10 @@ function Base.show(io::IO, credentials::AzureCredentials)
     print(io, repr(credentials.host), ")")
 end
 
-const _AzureCredentialsFFI = NTuple{4,Cstring}
+const _AzureCredentialsFFI = LibRustStore.AzureCredentials
 
 function Base.cconvert(::Type{Ref{AzureCredentials}}, credentials::AzureCredentials)
-   credentials_ffi = (
+   credentials_ffi = _AzureCredentialsFFI(
         Base.unsafe_convert(Cstring, Base.cconvert(Cstring, credentials.account)),
         Base.unsafe_convert(Cstring, Base.cconvert(Cstring, credentials.container)),
         Base.unsafe_convert(Cstring, Base.cconvert(Cstring, credentials.key)),
@@ -78,16 +56,9 @@ function Base.unsafe_convert(::Type{Ref{AzureCredentials}}, x::Tuple{T,Ref{T}}) 
     return Base.unsafe_convert(Ptr{_AzureCredentialsFFI}, x[2])
 end
 
-struct Response
-    result::Cint
-    length::Culonglong
-    error_message::Ptr{Cchar}
-
-    Response() = new(-1, 0, C_NULL)
-end
 
 function blob_get!(path::String, buffer::AbstractVector{UInt8}, credentials::AzureCredentials)
-    response = Ref(Response())
+    response = Ref(Response(LibRustStore.Uninitialized, 0, C_NULL))
     size = length(buffer)
     cond = Base.AsyncCondition()
     cond_handle = cond.handle
@@ -124,7 +95,7 @@ function blob_get!(path::String, buffer::AbstractVector{UInt8}, credentials::Azu
 end
 
 function blob_put(path::String, buffer::AbstractVector{UInt8}, credentials::AzureCredentials)
-    response = Ref(Response())
+    response = Ref(Response(LibRustStore.Uninitialized, 0, C_NULL))
     size = length(buffer)
     cond = Base.AsyncCondition()
     cond_handle = cond.handle
@@ -152,7 +123,7 @@ function blob_put(path::String, buffer::AbstractVector{UInt8}, credentials::Azur
         response = response[]
         if response.result == 1
             err = "failed to process put with error: $(unsafe_string(response.error_message))"
-            @ccall librust_store.destroy_cstring(response.error_message::Ptr{Cchar})::Cint
+            LibRustStore.destroy_cstring(response.error_message)
             error(err)
         end
 

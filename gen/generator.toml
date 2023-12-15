@@ -1,0 +1,20 @@
+# See https://github.com/JuliaInterop/Clang.jl/blob/master/gen/generator.toml
+# for supported options.
+[general]
+# the `expression` in the following code:
+# ccall((function_name, expression), returntype, (argtype1, ...), argvalue1, ...)
+library_name = "librust_store"
+
+# output file path relative to the `gen/` directory
+output_file_path = "../src/gen/lib_rust_store.jl"
+
+# if this entry is not empty, the generator will print the code below to the `output_file_path`.
+# module module_name
+#
+# end # module
+module_name = "LibRustStore"
+
+# if this entry is not empty, the generator will print the code below to the `output_file_path`.
+# using jll_pkg_name
+# export jll_pkg_name
+jll_pkg_name = "rust_store_jll"

@@ -16,17 +16,18 @@ sources = [
 # Bash recipe for building across all platforms
 script = raw"""
 cd ${WORKSPACE}/srcdir/
+cbindgen --crate rust_store --config cbindgen.toml --output "${includedir}/rust_store.h"
 cargo rustc --release --lib --crate-type=cdylib
 install -Dvm 755 "target/${rust_target}/release/librust_store.${dlext}" "${libdir}/librust_store.${dlext}"
 """
 
-platforms = supported_platforms()
-# Our Rust toolchain for i686 Windows is unusable
-filter!(p -> !Sys.iswindows(p) || arch(p) != "i686", platforms)
-# Also, can't build cdylib for Musl systems
-filter!(p -> libc(p) != "musl", platforms)
+# platforms = supported_platforms()
+# # Our Rust toolchain for i686 Windows is unusable
+# filter!(p -> !Sys.iswindows(p) || arch(p) != "i686", platforms)
+# # Also, can't build cdylib for Musl systems
+# filter!(p -> libc(p) != "musl", platforms)
 # # For local Mac testing:
-# platforms = [Platform("aarch64", "macos")]
+platforms = [Platform("aarch64", "macos")]
 
 # The products that we will ensure are always built
 products = [
@@ -34,7 +35,9 @@ products = [
 ]
 
 # Dependencies that must be installed before this package can be built
-dependencies = Dependency[
+dependencies = [
+    # HostBuildDependency(PackageSpec(; name="cbindgen_jll", uuid="a52b955f-5256-5bb0-8795-313e28591558")),
+    HostBuildDependency("cbindgen_jll"),
 ]
 
 # Build the tarballs

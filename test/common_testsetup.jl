@@ -4,5 +4,5 @@
     # with all the tests (some of the tests would take too long if we use default values).
     max_retries = 5
     retry_timeout_sec = 5
-    ObjectStore.init_rust_store(ObjectStore.RustStoreConfig(max_retries, retry_timeout_sec))
+    ObjectStore.init_rust_store(RustStoreConfig(max_retries, retry_timeout_sec))
 end
