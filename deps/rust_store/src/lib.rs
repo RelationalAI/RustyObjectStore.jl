@@ -7,8 +7,7 @@ use std::panic;
 use std::ffi::CStr;
 use std::ffi::CString;
 use std::ffi::{c_char, c_void};
-use std::os::raw::{c_int};
-use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
+use std::sync::{Once, Arc, atomic::{AtomicUsize, Ordering}};
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::Hasher;
@@ -23,6 +22,7 @@ static RT: Lazy<Runtime> = Lazy::new(|| tokio::runtime::Runtime::new()
 static SQ: OnceCell<async_channel::Sender<Request>> = OnceCell::new();
 static CLIENTS: Lazy<Cache<u64, Arc<dyn ObjectStore>>> = Lazy::new(|| Cache::new(10));
 static CONFIG: OnceCell<GlobalConfigOptions> = OnceCell::new();
+static INIT: Once = Once::new();
 
 #[repr(C)]
 pub enum CResult {
@@ -178,12 +178,12 @@ pub async fn connect_and_test(credentials: &AzureCredentials) -> anyhow::Result<
 }
 
 #[no_mangle]
-pub extern "C" fn start(panic_handler: unsafe extern "C" fn(_:c_int)->c_int, config: GlobalConfigOptions) -> CResult {
+pub extern "C" fn start(panic_handler: unsafe extern "C" fn()->c_void, config: GlobalConfigOptions) -> CResult {
     let default_panic = std::panic::take_hook();
     panic::set_hook(Box::new(move |info| {
         //tracing::warn!("{:?}", info);
         unsafe{
-            let _ = panic_handler(0);
+            let _ = panic_handler();
         }
         // We don't expect the panic_handler callback to return to us, but if it does
         // for some reason we should invoke the default handler to crash instead of
@@ -192,7 +192,10 @@ pub extern "C" fn start(panic_handler: unsafe extern "C" fn(_:c_int)->c_int, con
     }));
 
     let _ = CONFIG.set(config);
-    tracing_subscriber::fmt::init();
+    // Avoid panic from multiple initialization of the tracing subscriber
+    INIT.call_once(|| {
+        tracing_subscriber::fmt::init();
+    });
 
     RT.spawn(async move {
         let (tx, rx) = async_channel::bounded(16 * 1024);

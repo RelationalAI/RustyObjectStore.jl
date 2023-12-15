@@ -33,11 +33,21 @@ end
 
 # This function will be called if Rust panics. It should only happen in the
 # case of a program bug (not, e.g., a network failure)
-function panic_handler(_::Int)::Int
-    error("Rust panic")
-    return 0
+function panic_handler()
+    # Notify the error listener to throw an exception on the Julia side
+    ccall(:uv_async_send, Nothing, (Ptr{Nothing},), panic_cond[].handle)
+    return
 end
-const panic_handler_c = @cfunction(panic_handler, Int, (Int,))
+const panic_handler_c = Ref{Ptr{Cvoid}}(C_NULL)
+const panic_cond = Ref{Base.AsyncCondition}()
+
+function __init__()
+    # Listen for Rust panics from panic_handler
+    panic_cond[] = Base.AsyncCondition() do _
+        @error "Rust panic"
+    end
+    panic_handler_c[] = @cfunction(panic_handler, Cvoid, ())
+end
 
 const RUST_STORE_STARTED = Ref(false)
 const _INIT_LOCK::ReentrantLock = ReentrantLock()
@@ -46,7 +56,7 @@ function init_rust_store(config::RustStoreConfig = RustStoreConfig(15, 150))
         if RUST_STORE_STARTED[]
             return
         end
-        @ccall rust_lib.start(panic_handler_c::Ptr{Cvoid}, config::RustStoreConfig)::Cint
+        Base.@ccall rust_lib.start(panic_handler_c[]::Ptr{Cvoid}, config::RustStoreConfig)::Cint
         RUST_STORE_STARTED[] = true
     end
 end
