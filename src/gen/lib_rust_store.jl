@@ -5,6 +5,11 @@ export rust_store_jll
 
 using CEnum
 
+# The following code is auto-generated. See the `gen/` directory.
+# Editting it by hand is not recommended.
+# Instead, edit the generating script and then re-generate this file.
+
+
 @cenum CResult::Int32 begin
     Uninitialized = -1
     Ok = 0
@@ -12,42 +17,30 @@ using CEnum
     Backoff = 2
 end
 
-struct GlobalConfigOptions
+struct FFI_GlobalConfigOptions
     max_retries::Csize_t
     retry_timeout_sec::UInt64
 end
 
-struct AzureCredentials
+struct FFI_AzureCredentials
     account::Ptr{Cchar}
     container::Ptr{Cchar}
     key::Ptr{Cchar}
     host::Ptr{Cchar}
 end
 
-struct Response
+struct FFI_Response
     result::CResult
     length::Csize_t
     error_message::Ptr{Int8}
 end
 
-function uv_async_send(cond)
-    ccall((:uv_async_send, librust_store), Int32, (Ptr{Cvoid},), cond)
-end
-
-function start(config)
-    ccall((:start, librust_store), CResult, (GlobalConfigOptions,), config)
-end
-
-function perform_get(path, buffer, size, credentials, response, handle)
-    ccall((:perform_get, librust_store), CResult, (Ptr{Cchar}, Ptr{UInt8}, Csize_t, Ptr{AzureCredentials}, Ptr{Response}, Ptr{Cvoid}), path, buffer, size, credentials, response, handle)
-end
-
-function perform_put(path, buffer, size, credentials, response, handle)
-    ccall((:perform_put, librust_store), CResult, (Ptr{Cchar}, Ptr{UInt8}, Csize_t, Ptr{AzureCredentials}, Ptr{Response}, Ptr{Cvoid}), path, buffer, size, credentials, response, handle)
-end
-
-function destroy_cstring(string)
-    ccall((:destroy_cstring, librust_store), CResult, (Ptr{Cchar},), string)
+# exports
+const PREFIXES = ["FFI_"]
+for name in names(@__MODULE__; all=true), prefix in PREFIXES
+    if startswith(string(name), prefix)
+        @eval export $name
+    end
 end
 
 end # module

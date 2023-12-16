@@ -3,12 +3,16 @@ module ObjectStore
 using rust_store_jll
 
 include("gen/lib_rust_store.jl")
-using .LibRustStore: GlobalConfigOptions, Response
-using .LibRustStore: perform_get, perform_put
+using .LibRustStore
 
 export init_rust_store, blob_get!, blob_put, AzureCredentials, RustStoreConfig
 
-const RustStoreConfig = LibRustStore.GlobalConfigOptions
+"""
+    RustStoreConfig(max_retries, retry_timeout_sec)
+
+Global configuration options to be passed to `init_rust_store`.
+"""
+const RustStoreConfig = FFI_GlobalConfigOptions
 
 const RUST_STORE_STARTED = Ref(false)
 const _INIT_LOCK::ReentrantLock = ReentrantLock()
@@ -17,7 +21,7 @@ function init_rust_store(config::RustStoreConfig=RustStoreConfig(15, 150))
         if RUST_STORE_STARTED[]
             return
         end
-        res = LibRustStore.start(config)
+        res = @ccall librust_store.start(config::FFI_GlobalConfigOptions)::Cint
         if res != 0
             error("Failed to init_rust_store")
         end
@@ -39,26 +43,25 @@ function Base.show(io::IO, credentials::AzureCredentials)
     print(io, repr(credentials.host), ")")
 end
 
-const _AzureCredentialsFFI = LibRustStore.AzureCredentials
 
 function Base.cconvert(::Type{Ref{AzureCredentials}}, credentials::AzureCredentials)
-   credentials_ffi = _AzureCredentialsFFI(
+   credentials_ffi = FFI_AzureCredentials(
         Base.unsafe_convert(Cstring, Base.cconvert(Cstring, credentials.account)),
         Base.unsafe_convert(Cstring, Base.cconvert(Cstring, credentials.container)),
         Base.unsafe_convert(Cstring, Base.cconvert(Cstring, credentials.key)),
         Base.unsafe_convert(Cstring, Base.cconvert(Cstring, credentials.host))
-    )::_AzureCredentialsFFI
+    )
     # cconvert ensures its outputs are preserved during a ccall, so we can crate a pointer
     # safely in the unsafe_convert call.
     return credentials_ffi, Ref(credentials_ffi)
 end
-function Base.unsafe_convert(::Type{Ref{AzureCredentials}}, x::Tuple{T,Ref{T}}) where {T<:_AzureCredentialsFFI}
-    return Base.unsafe_convert(Ptr{_AzureCredentialsFFI}, x[2])
+function Base.unsafe_convert(::Type{Ref{AzureCredentials}}, x::Tuple{T,Ref{T}}) where {T<:FFI_AzureCredentials}
+    return Base.unsafe_convert(Ptr{FFI_AzureCredentials}, x[2])
 end
 
 
 function blob_get!(path::String, buffer::AbstractVector{UInt8}, credentials::AzureCredentials)
-    response = Ref(Response(LibRustStore.Uninitialized, 0, C_NULL))
+    response = Ref(FFI_Response(LibRustStore.Uninitialized, 0, C_NULL))
     size = length(buffer)
     cond = Base.AsyncCondition()
     cond_handle = cond.handle
@@ -68,7 +71,7 @@ function blob_get!(path::String, buffer::AbstractVector{UInt8}, credentials::Azu
             buffer::Ref{Cuchar},
             size::Culonglong,
             credentials::Ref{AzureCredentials},
-            response::Ref{Response},
+            response::Ref{FFI_Response},
             cond_handle::Ptr{Cvoid}
         )::Cint
 
@@ -95,7 +98,7 @@ function blob_get!(path::String, buffer::AbstractVector{UInt8}, credentials::Azu
 end
 
 function blob_put(path::String, buffer::AbstractVector{UInt8}, credentials::AzureCredentials)
-    response = Ref(Response(LibRustStore.Uninitialized, 0, C_NULL))
+    response = Ref(FFI_Response(LibRustStore.Uninitialized, 0, C_NULL))
     size = length(buffer)
     cond = Base.AsyncCondition()
     cond_handle = cond.handle
@@ -105,7 +108,7 @@ function blob_put(path::String, buffer::AbstractVector{UInt8}, credentials::Azur
             buffer::Ref{Cuchar},
             size::Culonglong,
             credentials::Ref{AzureCredentials},
-            response::Ref{Response},
+            response::Ref{FFI_Response},
             cond_handle::Ptr{Cvoid}
         )::Cint
 
@@ -123,7 +126,7 @@ function blob_put(path::String, buffer::AbstractVector{UInt8}, credentials::Azur
         response = response[]
         if response.result == 1
             err = "failed to process put with error: $(unsafe_string(response.error_message))"
-            LibRustStore.destroy_cstring(response.error_message)
+            @ccall librust_store.destroy_cstring(response.error_message::Ptr{Cchar})::Cint
             error(err)
         end
 

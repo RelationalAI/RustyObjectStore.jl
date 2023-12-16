@@ -12,32 +12,28 @@ options = load_options(joinpath(@__DIR__, "generator.toml"))
 args = get_default_args()
 push!(args, "-I$include_dir")
 
-# header files to wrap
-headers = joinpath(include_dir, "rust_store.h")
+# Header files to wrap. Assumes rust_store_jll has C header file created by cbindgen.
+headers = filter(endswith(".h"), readdir(include_dir; join=true))
 
 ctx = create_context(headers, args, options)
 
-build!(ctx)
+# Build without printing so we can rename structs and filter out functions before printing
+build!(ctx, BUILDSTAGE_NO_PRINTING)
 
-# # build without printing so we can rename struct before printing
-# build!(ctx, BUILDSTAGE_NO_PRINTING)
+# Rename structs to have prefix `FFI_` so their usage in Julia code is clear,
+# and they can be automatically exported (see generator.toml).
+# Remove `ccall` function wrappers as we prefer  `@ccall` usage, see
+# https://docs.julialang.org/en/v1/manual/calling-c-and-fortran-code/
+filter!(get_nodes(ctx.dag)) do node
+    filter!(get_exprs(node)) do expr
+        if expr.head == :struct
+            expr.args[2] = Symbol(:FFI_, expr.args[2])
+        end
+        return expr.head != :function
+    end
+    # Remove nodes with no remaining expressions; otherwise printing fails.
+    return !isempty(get_exprs(node))
+end
 
-# function rewrite!(dag::ExprDAG)
-#     for node in get_nodes(dag)
-#         for expr in get_exprs(node)
-#             rewrite!(expr)
-#         end
-#     end
-# end
-# function rewrite!(ex::Expr)
-#     if ex.head == :struct
-#         ex.args[2] = Symbol(ex.args[2], :_FFI)
-#     end
-#     # TODO: use these renamed structs in the `ccall`s
-#     return ex
-# end
-
-# rewrite!(ctx.dag)
-
-# # print out the file with the renamed structs
-# build!(ctx, BUILDSTAGE_PRINTING_ONLY)
+# Print out the file with the renamed structs
+build!(ctx, BUILDSTAGE_PRINTING_ONLY)
