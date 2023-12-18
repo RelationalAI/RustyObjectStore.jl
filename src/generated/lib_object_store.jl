@@ -9,7 +9,7 @@ using CEnum
 # Editting it by hand is not recommended.
 
 
-@cenum CResult::Int32 begin
+@cenum FFI_CResult::Int32 begin
     Uninitialized = -1
     Ok = 0
     Error = 1
@@ -29,7 +29,7 @@ struct FFI_AzureCredentials
 end
 
 struct FFI_Response
-    result::CResult
+    result::FFI_CResult
     length::Csize_t
     error_message::Ptr{Int8}
 end

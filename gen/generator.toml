@@ -20,6 +20,7 @@ module_name = "LibObjectStore"
 jll_pkg_name = "object_store_jll"
 
 # identifiers that starts with the string listed in this entry will be exported.
+# In `deps/cbindgen.toml` we set exported names to be prefixed with `FFI_`
 export_symbol_prefixes = ["FFI_"]
 
 # the code in the following file will be copy-pasted to `output_file_path` before the generated code.

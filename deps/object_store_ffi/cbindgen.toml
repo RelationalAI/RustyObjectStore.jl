@@ -1,3 +1,20 @@
 # See https://github.com/mozilla/cbindgen/blob/master/docs.md#cbindgentoml
 # for a list of possible configuration values.
 language = "C"
+
+[export]
+# A prefix to add before the name of every item
+prefix = "FFI_"
+
+# Types of items that we'll generate.
+# If empty, then all types of item are emitted.
+# Possible items:
+# * "constants"
+# * "globals"
+# * "enums"
+# * "structs"
+# * "unions"
+# * "typedefs"
+# * "opaque"
+# * "functions"
+item_types = ["enums", "structs"]
