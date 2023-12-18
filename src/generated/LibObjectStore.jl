@@ -1,8 +1,5 @@
 module LibObjectStore
 
-using object_store_jll
-export object_store_jll
-
 using CEnum
 
 # The following code is auto-generated. See the `gen/` directory.

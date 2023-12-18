@@ -6,7 +6,7 @@
 library_name = "libobject_store_ffi"
 
 # output file path relative to the `gen/` directory
-output_file_path = "../src/generated/lib_object_store.jl"
+output_file_path = "../src/generated/LibObjectStore.jl"
 
 # if this entry is not empty, the generator will print the code below to the `output_file_path`.
 # module module_name
@@ -15,9 +15,10 @@ output_file_path = "../src/generated/lib_object_store.jl"
 module_name = "LibObjectStore"
 
 # if this entry is not empty, the generator will print the code below to the `output_file_path`.
-# using jll_pkg_name
-# export jll_pkg_name
-jll_pkg_name = "object_store_jll"
+#   using jll_pkg_name
+#   export jll_pkg_name
+# jll_pkg_name = "object_store_ffi_jll"
+jll_pkg_name = ""
 
 # identifiers that starts with the string listed in this entry will be exported.
 # In `deps/cbindgen.toml` we set exported names to be prefixed with `FFI_`

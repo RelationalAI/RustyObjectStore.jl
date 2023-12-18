@@ -1,8 +1,8 @@
 module ObjectStore
 
-using object_store_jll
+using object_store_ffi_jll: libobject_store_ffi
 
-include("gen/lib_object_store.jl")
+include("generated/LibObjectStore.jl")
 using .LibObjectStore
 
 export init_object_store, blob_get!, blob_put, AzureCredentials, ObjectStoreConfig
@@ -22,7 +22,7 @@ function init_object_store(config::ObjectStoreConfig=ObjectStoreConfig(15, 150))
         if OBJECT_STORE_STARTED[]
             return
         end
-        res = @ccall libobject_store.start(config::FFI_GlobalConfigOptions)::Cint
+        res = @ccall libobject_store_ffi.start(config::FFI_GlobalConfigOptions)::Cint
         if res != 0
             error("Failed to init_rust_store")
         end
@@ -67,7 +67,7 @@ function blob_get!(path::String, buffer::AbstractVector{UInt8}, credentials::Azu
     cond = Base.AsyncCondition()
     cond_handle = cond.handle
     while true
-        res = @ccall libobject_store.perform_get(
+        res = @ccall libobject_store_ffi.perform_get(
             path::Cstring,
             buffer::Ref{Cuchar},
             size::Culonglong,
@@ -90,7 +90,7 @@ function blob_get!(path::String, buffer::AbstractVector{UInt8}, credentials::Azu
         response = response[]
         if response.result == 1
             err = "failed to process get with error: $(unsafe_string(response.error_message))"
-            @ccall libobject_store.destroy_cstring(response.error_message::Ptr{Cchar})::Cint
+            @ccall libobject_store_ffi.destroy_cstring(response.error_message::Ptr{Cchar})::Cint
             error(err)
         end
 
@@ -104,7 +104,7 @@ function blob_put(path::String, buffer::AbstractVector{UInt8}, credentials::Azur
     cond = Base.AsyncCondition()
     cond_handle = cond.handle
     while true
-        res = @ccall libobject_store.perform_put(
+        res = @ccall libobject_store_ffi.perform_put(
             path::Cstring,
             buffer::Ref{Cuchar},
             size::Culonglong,
@@ -127,7 +127,7 @@ function blob_put(path::String, buffer::AbstractVector{UInt8}, credentials::Azur
         response = response[]
         if response.result == 1
             err = "failed to process put with error: $(unsafe_string(response.error_message))"
-            @ccall libobject_store.destroy_cstring(response.error_message::Ptr{Cchar})::Cint
+            @ccall libobject_store_ffi.destroy_cstring(response.error_message::Ptr{Cchar})::Cint
             error(err)
         end
 
