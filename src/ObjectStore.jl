@@ -38,7 +38,10 @@ function init_rust_store(config::RustStoreConfig = RustStoreConfig(15, 150))
         if RUST_STORE_STARTED[]
             return
         end
-        @ccall rust_lib.start(config::RustStoreConfig)::Cint
+        res = @ccall rust_lib.start(config::RustStoreConfig)::Cint
+        if res != 0
+            error("Failed to init_rust_store")
+        end
         RUST_STORE_STARTED[] = true
     end
 end
