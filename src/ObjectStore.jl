@@ -1,31 +1,32 @@
 module ObjectStore
 
-using rust_store_jll
+using object_store_jll
 
-include("gen/lib_rust_store.jl")
-using .LibRustStore
+include("gen/lib_object_store.jl")
+using .LibObjectStore
 
-export init_rust_store, blob_get!, blob_put, AzureCredentials, RustStoreConfig
+export init_object_store, blob_get!, blob_put, AzureCredentials, ObjectStoreConfig
 
 """
-    RustStoreConfig(max_retries, retry_timeout_sec)
+    ObjectStoreConfig(max_retries, retry_timeout_sec)
 
-Global configuration options to be passed to `init_rust_store`.
+Global configuration options to be passed to `init_object_store`.
 """
-const RustStoreConfig = FFI_GlobalConfigOptions
+const ObjectStoreConfig = FFI_GlobalConfigOptions
 
-const RUST_STORE_STARTED = Ref(false)
+
+const OBJECT_STORE_STARTED = Ref(false)
 const _INIT_LOCK::ReentrantLock = ReentrantLock()
-function init_rust_store(config::RustStoreConfig=RustStoreConfig(15, 150))
+function init_object_store(config::ObjectStoreConfig=ObjectStoreConfig(15, 150))
     Base.@lock _INIT_LOCK begin
-        if RUST_STORE_STARTED[]
+        if OBJECT_STORE_STARTED[]
             return
         end
-        res = @ccall librust_store.start(config::FFI_GlobalConfigOptions)::Cint
+        res = @ccall libobject_store.start(config::FFI_GlobalConfigOptions)::Cint
         if res != 0
             error("Failed to init_rust_store")
         end
-        RUST_STORE_STARTED[] = true
+        OBJECT_STORE_STARTED[] = true
     end
 end
 
@@ -61,12 +62,12 @@ end
 
 
 function blob_get!(path::String, buffer::AbstractVector{UInt8}, credentials::AzureCredentials)
-    response = Ref(FFI_Response(LibRustStore.Uninitialized, 0, C_NULL))
+    response = Ref(FFI_Response(LibObjectStore.Uninitialized, 0, C_NULL))
     size = length(buffer)
     cond = Base.AsyncCondition()
     cond_handle = cond.handle
     while true
-        res = @ccall librust_store.perform_get(
+        res = @ccall libobject_store.perform_get(
             path::Cstring,
             buffer::Ref{Cuchar},
             size::Culonglong,
@@ -89,7 +90,7 @@ function blob_get!(path::String, buffer::AbstractVector{UInt8}, credentials::Azu
         response = response[]
         if response.result == 1
             err = "failed to process get with error: $(unsafe_string(response.error_message))"
-            @ccall librust_store.destroy_cstring(response.error_message::Ptr{Cchar})::Cint
+            @ccall libobject_store.destroy_cstring(response.error_message::Ptr{Cchar})::Cint
             error(err)
         end
 
@@ -98,12 +99,12 @@ function blob_get!(path::String, buffer::AbstractVector{UInt8}, credentials::Azu
 end
 
 function blob_put(path::String, buffer::AbstractVector{UInt8}, credentials::AzureCredentials)
-    response = Ref(FFI_Response(LibRustStore.Uninitialized, 0, C_NULL))
+    response = Ref(FFI_Response(LibObjectStore.Uninitialized, 0, C_NULL))
     size = length(buffer)
     cond = Base.AsyncCondition()
     cond_handle = cond.handle
     while true
-        res = @ccall librust_store.perform_put(
+        res = @ccall libobject_store.perform_put(
             path::Cstring,
             buffer::Ref{Cuchar},
             size::Culonglong,
@@ -126,7 +127,7 @@ function blob_put(path::String, buffer::AbstractVector{UInt8}, credentials::Azur
         response = response[]
         if response.result == 1
             err = "failed to process put with error: $(unsafe_string(response.error_message))"
-            @ccall librust_store.destroy_cstring(response.error_message::Ptr{Cchar})::Cint
+            @ccall libobject_store.destroy_cstring(response.error_message::Ptr{Cchar})::Cint
             error(err)
         end
 

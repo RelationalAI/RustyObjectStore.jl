@@ -1,4 +1,4 @@
-@testitem "Basic BlobStorage exceptions" setup=[InitializeRustStore] begin
+@testitem "Basic BlobStorage exceptions" setup=[InitializeObjectStore] begin
     using CloudBase.CloudTest: Azurite
     import CloudBase
     using ObjectStore: blob_get!, blob_put, AzureCredentials

@@ -1,14 +1,14 @@
 using BinaryBuilder
 
-name = "rust_store"
+name = "object_store_ffi"
 version = v"0.1.0"
 
 sources = [
-    DirectorySource("./rust_store"),
+    DirectorySource("./object_store_ffi"),
     # # OR something like this (untested):
-    # # https://github.com/RelationalAI/ObjectStore.jl2/commit/a5b053f824d8e165211a67c4a84adc520fbac9ae
+    # # https://github.com/RelationalAI/ObjectStore.jl/commit/a5b053f824d8e165211a67c4a84adc520fbac9ae
     # GitSource(
-    #     "https://github.com/RelationalAI/ObjectStore.jl2/deps/rust_store",
+    #     "https://github.com/RelationalAI/ObjectStore.jl/deps/object_store_ffi",
     #     "a5b053f824d8e165211a67c4a84adc520fbac9ae"
     # ),
 ]
@@ -16,9 +16,9 @@ sources = [
 # Bash recipe for building across all platforms
 script = raw"""
 cd ${WORKSPACE}/srcdir/
-cbindgen --crate rust_store --config cbindgen.toml --output "${includedir}/rust_store.h"
+cbindgen --crate object_store_ffi --config cbindgen.toml --output "${includedir}/object_store_ffi.h"
 cargo rustc --release --lib --crate-type=cdylib
-install -Dvm 755 "target/${rust_target}/release/librust_store.${dlext}" "${libdir}/librust_store.${dlext}"
+install -Dvm 755 "target/${rust_target}/release/libobject_store_ffi.${dlext}" "${libdir}/libobject_store_ffi.${dlext}"
 """
 
 # platforms = supported_platforms()
@@ -31,7 +31,7 @@ platforms = [Platform("aarch64", "macos")]
 
 # The products that we will ensure are always built
 products = [
-    LibraryProduct("librust_store", :librust_store),
+    LibraryProduct("libobject_store_ffi", :libobject_store_ffi),
 ]
 
 # Dependencies that must be installed before this package can be built

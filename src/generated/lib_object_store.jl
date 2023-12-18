@@ -1,13 +1,12 @@
-module LibRustStore
+module LibObjectStore
 
-using rust_store_jll
-export rust_store_jll
+using object_store_jll
+export object_store_jll
 
 using CEnum
 
 # The following code is auto-generated. See the `gen/` directory.
 # Editting it by hand is not recommended.
-# Instead, edit the generating script and then re-generate this file.
 
 
 @cenum CResult::Int32 begin

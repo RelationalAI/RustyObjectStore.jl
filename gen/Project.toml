@@ -1,3 +1,3 @@
 [deps]
 Clang = "40e3b903-d033-50b4-a0cc-940c62c95e31"
-rust_store_jll = "d3153661-548e-59ba-adcc-14d087a405cd"
+object_store_ffi_jll = "0e112785-0821-598c-8835-9f07837e8d7b"

@@ -873,6 +873,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "object_store_ffi"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-channel",
+ "bytes",
+ "crossbeam-queue",
+ "futures-util",
+ "moka",
+ "object_store",
+ "once_cell",
+ "reqwest",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+]
+
+[[package]]
 name = "once_cell"
 version = "1.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1105,26 +1125,6 @@ dependencies = [
  "spin",
  "untrusted",
  "windows-sys 0.48.0",
-]
-
-[[package]]
-name = "rust_store"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-channel",
- "bytes",
- "crossbeam-queue",
- "futures-util",
- "moka",
- "object_store",
- "once_cell",
- "reqwest",
- "thiserror",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "url",
 ]
 
 [[package]]
