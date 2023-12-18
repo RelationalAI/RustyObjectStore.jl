@@ -145,15 +145,9 @@
         end
     end
 
-    @testset "panic handle" begin
+    @testset "multiple start" begin
         config = RustStoreConfig(5, 5)
-        try
-            @ccall ObjectStore.rust_lib.start(ObjectStore.panic_handler_c::Ptr{Cvoid},
-                        config::RustStoreConfig)::Cint
-            @test false # Should have thrown an error
-        catch e
-            @test e isa ErrorException
-            @test occursin("Rust panic", e.msg)
-        end
+        res = @ccall ObjectStore.rust_lib.start(config::RustStoreConfig)::Cint
+        @test res == 1 # Rust CResult::Error
     end
 end # @testitem

@@ -1,14 +1,11 @@
-use anyhow::anyhow;
 use futures_util::StreamExt;
 use once_cell::sync::Lazy;
 use once_cell::sync::OnceCell;
 use tokio::runtime::Runtime;
-use std::panic;
 use std::ffi::CStr;
 use std::ffi::CString;
 use std::ffi::{c_char, c_void};
-use std::os::raw::{c_int};
-use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
+use std::sync::Arc;
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::Hasher;
@@ -18,12 +15,25 @@ use object_store::azure::MicrosoftAzureBuilder;  // TODO aws::AmazonS3Builder
 
 use moka::future::Cache;
 
+// Our global variables needed by our library at runtime. Note that we follow Rust's
+// safety rules here by making them immutable with write-exactly-once semantics using
+// either Lazy or OnceCell.
 static RT: Lazy<Runtime> = Lazy::new(|| tokio::runtime::Runtime::new()
         .expect("could not initialize tokio runtime"));
+// A channel (i.e., a queue) where the GET/PUT requests from Julia are placed and where
+// our dispatch task pulls requests.
 static SQ: OnceCell<async_channel::Sender<Request>> = OnceCell::new();
+// The ObjectStore objects contain the context for communicating with a particular
+// storage bucket/account, including authentication info. This caches them so we do
+// not need to pay the construction cost for each request.
 static CLIENTS: Lazy<Cache<u64, Arc<dyn ObjectStore>>> = Lazy::new(|| Cache::new(10));
+// Contains configuration items that affect every request globally by default,
+// currently includes retry configuration.
 static CONFIG: OnceCell<GlobalConfigOptions> = OnceCell::new();
 
+// The result type used for the API functions exposed to Julia. This is used for both
+// synchronous errors, e.g. our dispatch channel is full, and for async errors such
+// as HTTP connection errors as part of the async Response.
 #[repr(C)]
 pub enum CResult {
     Uninitialized = -1,
@@ -32,6 +42,8 @@ pub enum CResult {
     Backoff = 2,
 }
 
+// The types used for our internal dispatch mechanism, for dispatching Julia requests
+// to our worker task.
 enum Request {
     Get(Path, &'static mut [u8], &'static AzureCredentials, &'static mut Response, Notifier),
     Put(Path, &'static [u8], &'static AzureCredentials, &'static mut Response, Notifier)
@@ -39,6 +51,10 @@ enum Request {
 
 unsafe impl Send for Request {}
 
+
+// libuv is how we notify Julia tasks that their async requests are done.
+// Note that this will be linked in from the Julia process, we do not try
+// to link it while building this Rust lib.
 extern "C" {
     fn uv_async_send(cond: *const c_void) -> i32;
 }
@@ -62,13 +78,13 @@ pub struct AzureCredentials {
     account: *const c_char,
     container: *const c_char,
     key: *const c_char,
-    host: *const c_char
+    host: *const c_char,
 }
 
 #[repr(C)]
 pub struct GlobalConfigOptions {
     max_retries: usize,
-    retry_timeout_sec: u64
+    retry_timeout_sec: u64,
 }
 
 impl AzureCredentials {
@@ -104,11 +120,13 @@ impl AzureCredentials {
 unsafe impl Send for AzureCredentials {}
 unsafe impl Sync for AzureCredentials {}
 
+// The type used to give Julia the result of an async request. It will be allocated
+// by Julia as part of the request and filled in by Rust.
 #[repr(C)]
 pub struct Response {
     result: CResult,
     length: usize,
-    error_message: *mut i8
+    error_message: *mut i8,
 }
 
 unsafe impl Send for Response {}
@@ -135,15 +153,19 @@ impl Response {
     }
 }
 
-pub async fn connect_and_test(credentials: &AzureCredentials) -> anyhow::Result<Arc<dyn ObjectStore>> {
+async fn connect(credentials: &AzureCredentials) -> anyhow::Result<Arc<dyn ObjectStore>> {
     let (account, container, key, host) = credentials.to_string_tuple();
+    let max_retries = CONFIG.get().unwrap().max_retries;
+    let retry_timeout = std::time::Duration::from_secs(CONFIG.get().unwrap().retry_timeout_sec);
     let mut azure = MicrosoftAzureBuilder::new()
         .with_account(account)
         .with_container_name(container)
         .with_access_key(key)
         .with_retry(object_store::RetryConfig {
-            max_retries: CONFIG.get().unwrap().max_retries,
-            retry_timeout: std::time::Duration::from_secs(CONFIG.get().unwrap().retry_timeout_sec), ..Default::default() })
+            max_retries: max_retries,
+            retry_timeout: retry_timeout,
+            ..Default::default()
+        })
         .with_client_options(object_store::ClientOptions::new()
             .with_timeout(std::time::Duration::from_secs(20))
             .with_connect_timeout(std::time::Duration::from_secs(10))
@@ -166,61 +188,32 @@ pub async fn connect_and_test(credentials: &AzureCredentials) -> anyhow::Result<
 
     let client: Arc<dyn ObjectStore> = Arc::new(azure);
 
-    let ping_path: Path = "_this_file_does_not_exist".try_into().unwrap();
-    match client.get(&ping_path).await {
-        Ok(_) | Err(object_store::Error::NotFound { .. }) => {},
-        Err(e) => {
-            return Err(anyhow!("failed to check store client connection: {}", e));
-        }
-    }
-
     Ok(client)
 }
 
 #[no_mangle]
-pub extern "C" fn start(panic_handler: unsafe extern "C" fn(_:c_int)->c_int, config: GlobalConfigOptions) -> CResult {
-    let default_panic = std::panic::take_hook();
-    panic::set_hook(Box::new(move |info| {
-        //tracing::warn!("{:?}", info);
-        unsafe{
-            let _ = panic_handler(0);
+pub extern "C" fn start(config: GlobalConfigOptions) -> CResult {
+    match CONFIG.set(config) {
+        Ok(_) => {},
+        Err(_) => {
+            tracing::warn!("Tried to start() runtime multiple times!");
+            return CResult::Error;
         }
-        // We don't expect the panic_handler callback to return to us, but if it does
-        // for some reason we should invoke the default handler to crash instead of
-        // continuing in an undefined state
-        default_panic(info);
-    }));
-
-    let _ = CONFIG.set(config);
+    }
     tracing_subscriber::fmt::init();
 
+    // Creates our main dispatch task that takes Julia requests from the queue and does the
+    // GET or PUT. Note the 'buffer_unordered' call at the end of the map block, which lets
+    // requests in the queue be processed concurrently and in any order.
     RT.spawn(async move {
         let (tx, rx) = async_channel::bounded(16 * 1024);
         SQ.set(tx).expect("runtime already started");
-
-        let bytes_sent = Arc::new(AtomicUsize::new(0));
-
-        {
-            let bytes_sent = Arc::clone(&bytes_sent);
-            tokio::spawn(async move {
-                let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
-
-                let mut last_bytes = 0;
-                loop {
-                    interval.tick().await;
-                    let bytes = bytes_sent.load(Ordering::Relaxed);
-                    // tracing::info!("BW = {:.3} MiB/s", (bytes as f64 / 1024.0 / 1024.0) / start.elapsed().as_secs_f64());
-                    tracing::trace!("Instant BW = {:.3} MiB/s", ((bytes - last_bytes) as f64 / 1024.0 / 1024.0));
-                    last_bytes = bytes;
-                }
-            });
-        }
 
         rx.map(|req| {
             async {
                 match req {
                     Request::Get(p, slice, credentials, response, notifier) => {
-                        let client = match CLIENTS.try_get_with(credentials.get_hash(), connect_and_test(credentials)).await {
+                        let client = match CLIENTS.try_get_with(credentials.get_hash(), connect(credentials)).await {
                             Ok(client) => client,
                             Err(e) => {
                                 response.from_error(e);
@@ -228,79 +221,52 @@ pub extern "C" fn start(panic_handler: unsafe extern "C" fn(_:c_int)->c_int, con
                                 return;
                             }
                         };
-                        let mut tries = 10;
-                        loop {
-                            match client.get(&p).await {
-                                Ok(result) => {
-                                    let chunks = result.into_stream().collect::<Vec<_>>().await;
-                                    if let Some(Err(e)) = chunks.iter().find(|result| result.is_err()) {
-                                        if tries > 0 {
-                                            tracing::trace!("error while fetching a chunk, retrying: {}", e);
-                                            tries -= 1;
-                                            continue;
-                                        } else {
-                                            tracing::debug!("{}", e);
-                                            response.from_error(e);
-                                            notifier.notify();
+                        match client.get(&p).await {
+                            Ok(result) => {
+                                let chunks = result.into_stream().collect::<Vec<_>>().await;
+                                if let Some(Err(e)) = chunks.iter().find(|result| result.is_err()) {
+                                        tracing::warn!("{}", e);
+                                        response.from_error(e);
+                                        notifier.notify();
+                                        return;
+                                }
+                                tokio::spawn(async move {
+                                    let mut received_bytes = 0;
+                                    let mut failed = false;
+                                    for chunk in chunks {
+                                        let chunk = match chunk {
+                                            Ok(c) => c,
+                                            Err(_e) => {
+                                                unreachable!("checked for errors before");
+                                            }
+                                        };
+                                        let len = chunk.len();
+
+                                        if received_bytes + len > slice.len() {
+                                            response._error("Supplied buffer was too small");
+                                            failed = true;
                                             break;
                                         }
-                                    }
-                                    {
-                                        let bytes_sent = Arc::clone(&bytes_sent);
-                                        tokio::spawn(async move {
-                                            let mut received_bytes = 0;
-                                            let mut failed = false;
-                                            for chunk in chunks {
-                                                let chunk = match chunk {
-                                                    Ok(c) => c,
-                                                    Err(_e) => {
-                                                        unreachable!("checked for errors before");
-                                                    }
-                                                };
-                                                let len = chunk.len();
 
-                                                if received_bytes + len > slice.len() {
-                                                    response._error("Supplied buffer was too small");
-                                                    failed = true;
-                                                    break;
-                                                }
-
-                                                slice[received_bytes..(received_bytes + len)].copy_from_slice(&chunk);
-                                                received_bytes += len;
-                                            }
-                                            bytes_sent.fetch_add(received_bytes, Ordering::AcqRel);
-                                            if !failed {
-                                                response.success(received_bytes);
-                                            }
-                                            notifier.notify();
-                                        });
+                                        slice[received_bytes..(received_bytes + len)].copy_from_slice(&chunk);
+                                        received_bytes += len;
                                     }
-                                    break;
-                                }
-                                Err(ref err @ object_store::Error::Generic { .. }) => {
-                                    if tries > 0 {
-                                        tries -= 1;
-                                        tracing::trace!("generic error, retrying: {}", err);
-                                        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                                        continue;
+                                    if !failed {
+                                        response.success(received_bytes);
                                     }
-
-                                    tracing::debug!("{}", err);
-                                    response.from_error(err);
                                     notifier.notify();
-                                    break;
-                                }
-                                Err(e) => {
-                                    tracing::debug!("{}", e);
-                                    response.from_error(e);
-                                    notifier.notify();
-                                    break;
-                                }
+                                });
+                            }
+                            Err(e) => {
+                                tracing::warn!("{}", e);
+                                response.from_error(e);
+                                notifier.notify();
+                                return;
                             }
                         }
                     }
                     Request::Put(p, slice, credentials, response, notifier) => {
-                        let client = match CLIENTS.try_get_with(credentials.get_hash(), connect_and_test(credentials)).await {
+                        let client = match CLIENTS.try_get_with(credentials.get_hash(), connect(credentials)).await {
                             Ok(client) => client,
                             Err(e) => {
                                 response.from_error(e);
@@ -309,34 +275,17 @@ pub extern "C" fn start(panic_handler: unsafe extern "C" fn(_:c_int)->c_int, con
                             }
                         };
                         let len = slice.len();
-                        let mut tries = 10;
-                        loop {
-                            match client.put(&p, slice.into()).await {
-                                Ok(_) => {
-                                    bytes_sent.fetch_add(len, Ordering::AcqRel);
-                                    response.success(len);
-                                    notifier.notify();
-                                    break;
-                                }
-                                Err(ref err @ object_store::Error::Generic { .. }) => {
-                                    if tries > 0 {
-                                        tries -= 1;
-                                        tracing::trace!("generic error, retrying: {}", err);
-                                        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                                        continue;
-                                    }
-
-                                    tracing::debug!("{}", err);
-                                    response.from_error(err);
-                                    notifier.notify();
-                                    break;
-                                }
-                                Err(e) => {
-                                    tracing::debug!("{}", e);
-                                    response.from_error(e);
-                                    notifier.notify();
-                                    break;
-                                }
+                        match client.put(&p, slice.into()).await {
+                            Ok(_) => {
+                                response.success(len);
+                                notifier.notify();
+                                return;
+                            }
+                            Err(e) => {
+                                tracing::warn!("{}", e);
+                                response.from_error(e);
+                                notifier.notify();
+                                return;
                             }
                         }
                     }

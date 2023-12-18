@@ -31,14 +31,6 @@ struct RustStoreConfig
     retry_timeout_sec::Culonglong
 end
 
-# This function will be called if Rust panics. It should only happen in the
-# case of a program bug (not, e.g., a network failure)
-function panic_handler(_::Int)::Int
-    error("Rust panic")
-    return 0
-end
-const panic_handler_c = @cfunction(panic_handler, Int, (Int,))
-
 const RUST_STORE_STARTED = Ref(false)
 const _INIT_LOCK::ReentrantLock = ReentrantLock()
 function init_rust_store(config::RustStoreConfig = RustStoreConfig(15, 150))
@@ -46,7 +38,10 @@ function init_rust_store(config::RustStoreConfig = RustStoreConfig(15, 150))
         if RUST_STORE_STARTED[]
             return
         end
-        @ccall rust_lib.start(panic_handler_c::Ptr{Cvoid}, config::RustStoreConfig)::Cint
+        res = @ccall rust_lib.start(config::RustStoreConfig)::Cint
+        if res != 0
+            error("Failed to init_rust_store")
+        end
         RUST_STORE_STARTED[] = true
     end
 end
