@@ -193,12 +193,9 @@ async fn connect(credentials: &AzureCredentials) -> anyhow::Result<Arc<dyn Objec
 
 #[no_mangle]
 pub extern "C" fn start(config: GlobalConfigOptions) -> CResult {
-    match CONFIG.set(config) {
-        Ok(_) => {},
-        Err(_) => {
-            tracing::warn!("Tried to start() runtime multiple times!");
-            return CResult::Error;
-        }
+    if let Err(_) = CONFIG.set(config) {
+        tracing::warn!("Tried to start() runtime multiple times!");
+        return CResult::Error;
     }
     tracing_subscriber::fmt::init();
 
