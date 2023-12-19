@@ -41,7 +41,7 @@ run(`which cargo`)
 assert_compatible_version(`cargo -V`, "1.55.0")
 rust_source = joinpath(@__DIR__, "rust_store")
 # Elide rust warnings - they aren't helpful in this context
-ENV["RUSTFLAGS"]="-Awarnings"
+ENV["RUSTFLAGS"]="-Awarnings -Clink-arg=-undefined -Clink-arg=dynamic_lookup"
 # build release
 cd(rust_source)
 if Sys.islinux() || Sys.isapple()
