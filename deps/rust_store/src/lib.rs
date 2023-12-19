@@ -230,11 +230,11 @@ pub extern "C" fn start(config: GlobalConfigOptions) -> CResult {
                                 tokio::spawn(async move {
                                     let mut received_bytes = 0;
                                     let mut failed = false;
-                                    for chunk in chunks {
-                                        let chunk = match chunk {
+                                    for result in chunks {
+                                        let chunk = match result {
                                             Ok(c) => c,
                                             Err(_e) => {
-                                                unreachable!("checked for errors before");
+                                                unreachable!("checked `chunks` for errors before calling `spawn`");
                                             }
                                         };
                                         let len = chunk.len();
