@@ -297,9 +297,9 @@ end # @testitem
         #   while attempting to fulfill the request.
         # This error can occur when you enter HTTP instead of HTTPS in the connection.
         nrequests = test_status(:GET, 502)
-        @test nrequests == 1 broken=true
+        @test nrequests == 1 + max_retries
         nrequests = test_status(:PUT, 502)
-        @test nrequests == 1 broken=true
+        @test nrequests == 1 + max_retries
     end
 
     @testset "503: Service Unavailable" begin
@@ -328,8 +328,8 @@ end # @testitem
         #   a gateway or proxy, did not receive a timely response from an upstream server it
         #   needed to access in order to complete the request
         nrequests = test_status(:GET, 504)
-        @test nrequests == 1 broken=true
+        @test nrequests == 1 + max_retries
         nrequests = test_status(:PUT, 504)
-        @test nrequests == 1 broken=true
+        @test nrequests == 1 + max_retries
     end
 end
