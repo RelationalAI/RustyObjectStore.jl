@@ -247,12 +247,10 @@ end # @testitem
         # Returned when write operations conflict.
         # See https://learn.microsoft.com/en-us/rest/api/storageservices/blob-service-error-codes
         # See https://www.rfc-editor.org/rfc/rfc9110#status.409
-        # TODO: We currently don't retry but maybe we should? This is probably a case where the
-        # retry logic should add more noise to the backoff so that multiple writers don't collide on retry.
         nrequests = test_status(:GET, 409)
-        @test nrequests == 1 + max_retries broken=true
+        @test nrequests == 1
         nrequests = test_status(:PUT, 409)
-        @test nrequests == 1 + max_retries broken=true
+        @test nrequests == 1
     end
 
     @testset "412: Precondition Failed" begin
