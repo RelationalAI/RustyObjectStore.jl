@@ -222,7 +222,7 @@ pub extern "C" fn start(config: GlobalConfigOptions) -> CResult {
                             Ok(result) => {
                                 let chunks = result.into_stream().collect::<Vec<_>>().await;
                                 if let Some(Err(e)) = chunks.iter().find(|result| result.is_err()) {
-                                        tracing::warn!("{}", e);
+                                        tracing::warn!("Error while fetching a chunk: {}", e);
                                         response.from_error(e);
                                         notifier.notify();
                                         return;
