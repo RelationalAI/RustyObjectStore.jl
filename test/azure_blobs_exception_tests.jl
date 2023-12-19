@@ -2,6 +2,7 @@
     using CloudBase.CloudTest: Azurite
     import CloudBase
     using ObjectStore: blob_get!, blob_put, AzureCredentials
+    import ObjectStore
 
     # For interactive testing, use Azurite.run() instead of Azurite.with()
     # conf, p = Azurite.run(; debug=true, public=false); atexit(() -> kill(p))
@@ -142,5 +143,11 @@
             @test e isa ErrorException
             @test occursin("Connection refused", e.msg)
         end
+    end
+
+    @testset "multiple start" begin
+        config = RustStoreConfig(5, 5)
+        res = @ccall ObjectStore.rust_lib.start(config::RustStoreConfig)::Cint
+        @test res == 1 # Rust CResult::Error
     end
 end # @testitem
