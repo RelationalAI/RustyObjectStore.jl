@@ -1,4 +1,4 @@
-@testitem "Basic BlobStorage exceptions" setup=[InitializeRustStore] begin
+@testitem "Basic BlobStorage exceptions" setup=[InitializeObjectStore] begin
     using CloudBase.CloudTest: Azurite
     import CloudBase
     using ObjectStore: blob_get!, blob_put, AzureCredentials
@@ -146,8 +146,8 @@
     end
 
     @testset "multiple start" begin
-        config = RustStoreConfig(5, 5)
-        res = @ccall ObjectStore.rust_lib.start(config::RustStoreConfig)::Cint
+        config = ObjectStoreConfig(5, 5)
+        res = @ccall ObjectStore.rust_lib.start(config::ObjectStoreConfig)::Cint
         @test res == 1 # Rust CResult::Error
     end
 end # @testitem

@@ -1,4 +1,4 @@
-@testitem "Basic BlobStorage usage" setup=[InitializeRustStore] begin
+@testitem "Basic BlobStorage usage" setup=[InitializeObjectStore] begin
 using CloudBase.CloudTest: Azurite
 using ObjectStore: blob_get!, blob_put, AzureCredentials
 
@@ -101,7 +101,7 @@ end # Azurite.with
 end # @testitem
 
 # NOTE: PUT on azure always requires credentials, while GET on public containers doesn't
-@testitem "Basic BlobStorage usage (anonymous read enabled)" setup=[InitializeRustStore] begin
+@testitem "Basic BlobStorage usage (anonymous read enabled)" setup=[InitializeObjectStore] begin
 # TODO: implement a way for GET to be called without credentials
 @test_skip begin
 using CloudBase.CloudTest: Azurite

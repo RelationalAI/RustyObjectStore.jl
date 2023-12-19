@@ -39,7 +39,7 @@ run(`which rustup`)
 run(`rustup default stable`)
 run(`which cargo`)
 assert_compatible_version(`cargo -V`, "1.55.0")
-rust_source = joinpath(@__DIR__, "rust_store")
+rust_source = joinpath(@__DIR__, "object_store_ffi")
 # Elide rust warnings - they aren't helpful in this context
 if Sys.isapple()
     ENV["RUSTFLAGS"]="-Awarnings -Clink-arg=-undefined -Clink-arg=dynamic_lookup"
