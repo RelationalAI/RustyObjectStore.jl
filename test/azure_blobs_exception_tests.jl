@@ -161,14 +161,14 @@ end # @testitem
 ###  https://learn.microsoft.com/en-us/rest/api/storageservices/get-blob
 ### - "Put Blob"
 ###  https://learn.microsoft.com/en-us/rest/api/storageservices/put-blob
-@testitem "BlobStorage retries" setup=[InitializeRustStore] begin
+@testitem "BlobStorage retries" setup=[InitializeObjectStore] begin
     using CloudBase.CloudTest: Azurite
     import CloudBase
     using ObjectStore: blob_get!, blob_put, AzureCredentials
     import HTTP
     import Sockets
 
-    max_retries = InitializeRustStore.max_retries
+    max_retries = InitializeObjectStore.max_retries
 
     function test_status(method, response_status, headers=nothing)
         @assert method === :GET || method === :PUT
