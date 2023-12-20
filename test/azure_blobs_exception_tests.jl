@@ -277,6 +277,10 @@ end # @testitem
 
     @testset "429: Too Many Requests" begin
         # See https://www.rfc-editor.org/rfc/rfc6585#section-4
+        nrequests = test_status(:GET, 429)
+        @test nrequests == 1
+        nrequests = test_status(:PUT, 429)
+        @test nrequests == 1
         # See https://www.rfc-editor.org/rfc/rfc9110#field.retry-after
         # TODO: We probably should respect the Retry-After header, but we currently don't
         # (and we don't know if Azure actually sets it)
