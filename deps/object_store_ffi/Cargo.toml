@@ -1,5 +1,5 @@
 [package]
-name = "rust_store"
+name = "object_store_ffi"
 version = "0.1.0"
 edition = "2021"
 

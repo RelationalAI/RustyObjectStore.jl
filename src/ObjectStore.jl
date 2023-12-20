@@ -1,19 +1,19 @@
 module ObjectStore
 
 
-export init_rust_store, blob_get!, blob_put, AzureCredentials, RustStoreConfig
+export init_object_store, blob_get!, blob_put, AzureCredentials, ObjectStoreConfig
 
 const rust_lib_dir = @static if Sys.islinux() || Sys.isapple()
     joinpath(
         @__DIR__,
         "..",
         "deps",
-        "rust_store",
+        "object_store_ffi",
         "target",
         "release",
     )
 elseif Sys.iswindows()
-    @warn("The rust-store library is currently unsupported on Windows.")
+    @warn("The object_store_ffi library is currently unsupported on Windows.")
 end
 
 const extension = @static if Sys.islinux()
@@ -24,25 +24,25 @@ elseif Sys.iswindows()
     "dll"
 end
 
-const rust_lib = joinpath(rust_lib_dir, "librust_store.$extension")
+const rust_lib = joinpath(rust_lib_dir, "libobject_store_ffi.$extension")
 
-struct RustStoreConfig
+struct ObjectStoreConfig
     max_retries::Culonglong
     retry_timeout_sec::Culonglong
 end
 
-const RUST_STORE_STARTED = Ref(false)
+const OBJECT_STORE_STARTED = Ref(false)
 const _INIT_LOCK::ReentrantLock = ReentrantLock()
-function init_rust_store(config::RustStoreConfig = RustStoreConfig(15, 150))
+function init_object_store(config::ObjectStoreConfig = ObjectStoreConfig(15, 150))
     Base.@lock _INIT_LOCK begin
-        if RUST_STORE_STARTED[]
+        if OBJECT_STORE_STARTED[]
             return
         end
-        res = @ccall rust_lib.start(config::RustStoreConfig)::Cint
+        res = @ccall rust_lib.start(config::ObjectStoreConfig)::Cint
         if res != 0
-            error("Failed to init_rust_store")
+            error("Failed to init_object_store")
         end
-        RUST_STORE_STARTED[] = true
+        OBJECT_STORE_STARTED[] = true
     end
 end
 
