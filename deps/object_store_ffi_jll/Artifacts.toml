@@ -1,0 +1,17 @@
+[[object_store_ffi]]
+arch = "aarch64"
+git-tree-sha1 = "51128e815546def8088a2d782e714ba8b8eda1ab"
+os = "macos"
+
+    [[object_store_ffi.download]]
+    sha256 = "69884f977cae073d521d25e8b378cead69f0430f314a22c9f42998b4abd7b0f0"
+    url = "https://github.com/local/releases/download/object_store_ffi-v0.1.0+0/object_store_ffi.v0.1.0.aarch64-apple-darwin.tar.gz"
+[[object_store_ffi]]
+arch = "x86_64"
+git-tree-sha1 = "94428da74633e530bcb9593f19d091a8d4c044b4"
+libc = "glibc"
+os = "linux"
+
+    [[object_store_ffi.download]]
+    sha256 = "fb8c0406795428d6dde9f121789fcd4ea14eaa50f4216045399a0c1eab68af53"
+    url = "https://github.com/local/releases/download/object_store_ffi-v0.1.0+0/object_store_ffi.v0.1.0.x86_64-linux-gnu.tar.gz"
