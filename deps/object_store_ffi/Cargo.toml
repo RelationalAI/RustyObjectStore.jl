@@ -7,8 +7,9 @@ edition = "2021"
 [lib]
 crate-type = ["cdylib"]
 
-[profile.release]
-debug = true
+# # https://doc.rust-lang.org/cargo/reference/profiles.html
+# [profile.release]
+# debug = "limited"
 
 [dependencies]
 tokio = { version = "1.32.0", features = ["rt-multi-thread", "macros", "signal", "time"] }
@@ -16,7 +17,6 @@ bytes = "1.0"
 tracing = "0.1"
 tracing-subscriber = "0.3"
 futures-util = "0.3"
-# object_store = { git = "https://github.com/andrebsguedes/arrow-rs.git", branch = "dns", features = ["azure"] }
 reqwest = { version = "0.11", default-features = false, features = ["rustls-tls", "trust-dns"] }
 object_store = { version = "0.8", features = ["azure"] }
 thiserror = "1"
