@@ -140,7 +140,7 @@ version = "1.48.0+0"
 
 [[deps.object_store_ffi_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
-git-tree-sha1 = "838166ff5c9d0b8b58771194bb92600e19317b27"
+git-tree-sha1 = "a35ef23d2b0c234476b909edf32f4b1bfe658d76"
 repo-rev = "main"
 repo-url = "https://github.com/nickrobinson251/object_store_ffi_jll.jl"
 uuid = "0e112785-0821-598c-8835-9f07837e8d7b"
