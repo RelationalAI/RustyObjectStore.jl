@@ -1,30 +1,34 @@
 module ObjectStore
 
-
 export init_object_store, blob_get!, blob_put, AzureCredentials, ObjectStoreConfig
 
-const rust_lib_dir = @static if Sys.islinux() || Sys.isapple()
-    joinpath(
-        @__DIR__,
-        "..",
-        "deps",
-        "object_store_ffi",
-        "target",
-        "release",
-    )
-elseif Sys.iswindows()
-    @warn("The object_store_ffi library is currently unsupported on Windows.")
-end
+using object_store_ffi_jll
 
-const extension = @static if Sys.islinux()
-    "so"
-elseif Sys.isapple()
-    "dylib"
-elseif Sys.iswindows()
-    "dll"
-end
+const rust_lib = libobject_store_ffi
 
-const rust_lib = joinpath(rust_lib_dir, "libobject_store_ffi.$extension")
+# # For local development, after building `object_store_ffi` with `cargo build --release`.
+# const rust_lib = begin
+#     dir = @static if Sys.islinux() || Sys.isapple()
+#         joinpath(
+#             @__DIR__,
+#             "..",
+#             "deps",
+#             "object_store_ffi",
+#             "target",
+#             "release",
+#         )
+#     elseif Sys.iswindows()
+#         @warn("The object_store_ffi library is currently unsupported on Windows.")
+#     end
+#     ext = @static if Sys.islinux()
+#         "so"
+#     elseif Sys.isapple()
+#         "dylib"
+#     elseif Sys.iswindows()
+#         "dll"
+#     end
+#     realpath(joinpath(dir, "libobject_store_ffi.$ext"))
+# end
 
 struct ObjectStoreConfig
     max_retries::Culonglong
