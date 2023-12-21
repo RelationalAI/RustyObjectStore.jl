@@ -1,6 +1,10 @@
 using BinaryBuilder
 
-const deps_dir = realpath(joinpath(@__DIR__, ".."))
+cd(@__DIR__)
+
+const deps_dir = ".."
+
+# So `--deploy=local` puts the JLL package in the `deps/` directory.
 ENV["JULIA_PKG_DEVDIR"] = deps_dir
 
 name = "object_store_ffi"
@@ -21,9 +25,9 @@ install -Dvm 755 "target/${rust_target}/release/libobject_store_ffi.${dlext}" "$
 # Except perhaps i686 Windows and Musl systems.
 platforms = [
     Platform("aarch64", "macos"),
-    Platform("x86_64",  "macos"),
-    Platform("aarch64", "linux"),
     Platform("x86_64",  "linux"),
+    # Platform("x86_64",  "macos"),
+    # Platform("aarch64", "linux"),
 ]
 
 # The products that we will ensure are always built
