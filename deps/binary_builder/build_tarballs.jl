@@ -3,7 +3,7 @@ using BinaryBuilder
 cd(@__DIR__)
 
 name = "object_store_ffi"
-version = v"0.1.0"
+version = v"0.1.1"
 
 sources = [
     DirectorySource(joinpath("..", "object_store_ffi")),

@@ -2,7 +2,7 @@
 
 julia_version = "1.9.2"
 manifest_format = "2.0"
-project_hash = "3ae314f8478ce1beaf0e799ec956869974a78474"
+project_hash = "86dce8c2568689895fe576cde5431eee5e3b1c8c"
 
 [[deps.ArgTools]]
 uuid = "0dad84c5-d112-42e6-8d28-ef12dabb789f"
@@ -140,11 +140,11 @@ version = "1.48.0+0"
 
 [[deps.object_store_ffi_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
-git-tree-sha1 = "3d8e94a5d31e7ed4a98e03cb62d70cc6d9e11677"
+git-tree-sha1 = "838166ff5c9d0b8b58771194bb92600e19317b27"
 repo-rev = "main"
 repo-url = "https://github.com/nickrobinson251/object_store_ffi_jll.jl"
 uuid = "0e112785-0821-598c-8835-9f07837e8d7b"
-version = "0.1.0+0"
+version = "0.1.1+0"
 
 [[deps.p7zip_jll]]
 deps = ["Artifacts", "Libdl"]
