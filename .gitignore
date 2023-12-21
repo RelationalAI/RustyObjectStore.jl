@@ -1,2 +1,4 @@
-/Manifest.toml
+Manifest.toml
+*/products/*
+*/build/*
 *.log
