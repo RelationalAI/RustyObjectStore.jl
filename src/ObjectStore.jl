@@ -46,35 +46,54 @@ function init_rust_store(config::RustStoreConfig = RustStoreConfig(15, 150))
     end
 end
 
-struct AzureCredentials
+struct AzureConnection
     account::String
     container::String
-    key::String
+    access_key::String
     host::String
+    max_retries::UInt64
+    retry_timeout_sec::UInt64
+
+    # Constructor with default max_retries and timeout
+    AzureConnection(account::String, container::String, access_key::String, host::String;
+                    max_retries=0, retry_timeout_sec=0) =
+        new(account, container, access_key, host, 0, 0)
+
+    # Constructor for anonymous (no key) access
+    AzureConnection(account::String, container::String, host::String;
+                    max_retries=0, retry_timeout_sec=0) =
+        new(account, container, "", host, max_retries, retry_timeout_sec)
 end
-function Base.show(io::IO, credentials::AzureCredentials)
+
+
+
+function Base.show(io::IO, connection::AzureConnection)
     print(io, "AzureCredentials("),
     print(io, repr(credentials.account), ", ")
     print(io, repr(credentials.container), ", ")
     print(io, "\"*****\", ") # don't print the secret key
-    print(io, repr(credentials.host), ")")
+    print(io, repr(credentials.host), ", ")
+    print(io, repr(credentials.max_retries), ", ")
+    print(io, repr(credentials.retry_timeout_sec), ")")
 end
 
-const _AzureCredentialsFFI = NTuple{4,Cstring}
+const _AzureConnectionFFI = Tuple{Cstring, Cstring, Cstring, Cstring, Culonglong, Culonglong}
 
-function Base.cconvert(::Type{Ref{AzureCredentials}}, credentials::AzureCredentials)
-   credentials_ffi = (
-        Base.unsafe_convert(Cstring, Base.cconvert(Cstring, credentials.account)),
-        Base.unsafe_convert(Cstring, Base.cconvert(Cstring, credentials.container)),
-        Base.unsafe_convert(Cstring, Base.cconvert(Cstring, credentials.key)),
-        Base.unsafe_convert(Cstring, Base.cconvert(Cstring, credentials.host))
-    )::_AzureCredentialsFFI
+function Base.cconvert(::Type{Ref{AzureConnection}}, connection::AzureConnection)
+   connection_ffi = (
+        Base.unsafe_convert(Cstring, Base.cconvert(Cstring, connection.account)),
+        Base.unsafe_convert(Cstring, Base.cconvert(Cstring, connection.container)),
+        Base.unsafe_convert(Cstring, Base.cconvert(Cstring, connection.access_key)),
+        Base.unsafe_convert(Cstring, Base.cconvert(Cstring, connection.host)),
+        connection.max_retries,
+        connection.retry_timeout_sec
+    )::_AzureConnectionFFI
     # cconvert ensures its outputs are preserved during a ccall, so we can crate a pointer
     # safely in the unsafe_convert call.
-    return credentials_ffi, Ref(credentials_ffi)
+    return connection_ffi, Ref(connection_ffi)
 end
-function Base.unsafe_convert(::Type{Ref{AzureCredentials}}, x::Tuple{T,Ref{T}}) where {T<:_AzureCredentialsFFI}
-    return Base.unsafe_convert(Ptr{_AzureCredentialsFFI}, x[2])
+function Base.unsafe_convert(::Type{Ref{AzureConnection}}, x::Tuple{T,Ref{T}}) where {T<:_AzureConnectionFFI}
+    return Base.unsafe_convert(Ptr{_AzureConnectionFFI}, x[2])
 end
 
 struct Response
@@ -85,7 +104,7 @@ struct Response
     Response() = new(-1, 0, C_NULL)
 end
 
-function blob_get!(path::String, buffer::AbstractVector{UInt8}, credentials::AzureCredentials)
+function blob_get!(path::String, buffer::AbstractVector{UInt8}, connection::AzureConnection)
     response = Ref(Response())
     size = length(buffer)
     cond = Base.AsyncCondition()
@@ -95,7 +114,7 @@ function blob_get!(path::String, buffer::AbstractVector{UInt8}, credentials::Azu
             path::Cstring,
             buffer::Ref{Cuchar},
             size::Culonglong,
-            credentials::Ref{AzureCredentials},
+            connection::Ref{AzureConnection},
             response::Ref{Response},
             cond_handle::Ptr{Cvoid}
         )::Cint
@@ -122,7 +141,7 @@ function blob_get!(path::String, buffer::AbstractVector{UInt8}, credentials::Azu
     end
 end
 
-function blob_put(path::String, buffer::AbstractVector{UInt8}, credentials::AzureCredentials)
+function blob_put(path::String, buffer::AbstractVector{UInt8}, connection::AzureConnection)
     response = Ref(Response())
     size = length(buffer)
     cond = Base.AsyncCondition()
@@ -132,7 +151,7 @@ function blob_put(path::String, buffer::AbstractVector{UInt8}, credentials::Azur
             path::Cstring,
             buffer::Ref{Cuchar},
             size::Culonglong,
-            credentials::Ref{AzureCredentials},
+            connection::Ref{AzureConnection},
             response::Ref{Response},
             cond_handle::Ptr{Cvoid}
         )::Cint

@@ -6,7 +6,7 @@ use std::ffi::CStr;
 use std::ffi::CString;
 use std::ffi::{c_char, c_void};
 use std::sync::Arc;
-
+use std::time::Duration;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::Hasher;
 
@@ -45,8 +45,8 @@ pub enum CResult {
 // The types used for our internal dispatch mechanism, for dispatching Julia requests
 // to our worker task.
 enum Request {
-    Get(Path, &'static mut [u8], &'static AzureCredentials, &'static mut Response, Notifier),
-    Put(Path, &'static [u8], &'static AzureCredentials, &'static mut Response, Notifier)
+    Get(Path, &'static mut [u8], &'static AzureConnection, &'static mut Response, Notifier),
+    Put(Path, &'static [u8], &'static AzureConnection, &'static mut Response, Notifier)
 }
 
 unsafe impl Send for Request {}
@@ -74,11 +74,13 @@ impl Notifier {
 unsafe impl Send for Notifier {}
 
 #[repr(C)]
-pub struct AzureCredentials {
+pub struct AzureConnection {
     account: *const c_char,
     container: *const c_char,
-    key: *const c_char,
+    access_key: *const c_char,
     host: *const c_char,
+    max_retries: usize,     // If 0, will use global config default
+    retry_timeout_sec: u64, // If 0, will use global config default
 }
 
 #[repr(C)]
@@ -87,7 +89,7 @@ pub struct GlobalConfigOptions {
     retry_timeout_sec: u64,
 }
 
-impl AzureCredentials {
+impl AzureConnection {
     fn get_hash(&self) -> u64 {
         let mut hasher = DefaultHasher::new();
         let (account, container, key, host) = self.as_cstr_tuple();
@@ -95,13 +97,15 @@ impl AzureCredentials {
         hasher.write(container.to_bytes());
         hasher.write(key.to_bytes());
         hasher.write(host.to_bytes());
+        hasher.write_usize(self.max_retries);
+        hasher.write_u64(self.retry_timeout_sec);
         hasher.finish()
     }
 
     fn as_cstr_tuple(&self) -> (&CStr, &CStr, &CStr, &CStr) {
         let account = unsafe { std::ffi::CStr::from_ptr(self.account) };
         let container = unsafe { std::ffi::CStr::from_ptr(self.container) };
-        let key = unsafe { std::ffi::CStr::from_ptr(self.key) };
+        let key = unsafe { std::ffi::CStr::from_ptr(self.access_key) };
         let host = unsafe { std::ffi::CStr::from_ptr(self.host) };
         (account, container, key, host)
     }
@@ -117,8 +121,8 @@ impl AzureCredentials {
     }
 }
 
-unsafe impl Send for AzureCredentials {}
-unsafe impl Sync for AzureCredentials {}
+unsafe impl Send for AzureConnection {}
+unsafe impl Sync for AzureConnection {}
 
 // The type used to give Julia the result of an async request. It will be allocated
 // by Julia as part of the request and filled in by Rust.
@@ -153,14 +157,17 @@ impl Response {
     }
 }
 
-async fn connect(credentials: &AzureCredentials) -> anyhow::Result<Arc<dyn ObjectStore>> {
-    let (account, container, key, host) = credentials.to_string_tuple();
-    let max_retries = CONFIG.get().unwrap().max_retries;
-    let retry_timeout = std::time::Duration::from_secs(CONFIG.get().unwrap().retry_timeout_sec);
+async fn connect(connection: &AzureConnection) -> anyhow::Result<Arc<dyn ObjectStore>> {
+    let (account, container, access_key, host) = connection.to_string_tuple();
+    let max_retries = if connection.max_retries > 0 { connection.max_retries } else
+                            { CONFIG.get().unwrap().max_retries };
+    let retry_timeout = if connection.retry_timeout_sec > 0
+                            { Duration::from_secs(connection.retry_timeout_sec) }
+                        else
+                            { Duration::from_secs(CONFIG.get().unwrap().retry_timeout_sec) };
     let mut azure = MicrosoftAzureBuilder::new()
         .with_account(account)
         .with_container_name(container)
-        .with_access_key(key)
         .with_retry(object_store::RetryConfig {
             max_retries: max_retries,
             retry_timeout: retry_timeout,
@@ -170,6 +177,9 @@ async fn connect(credentials: &AzureCredentials) -> anyhow::Result<Arc<dyn Objec
             .with_timeout(std::time::Duration::from_secs(20))
             .with_connect_timeout(std::time::Duration::from_secs(10))
         );
+    if access_key != "" {
+        azure = azure.with_access_key(access_key);
+    }
 
     if host.len() > 0 {
         tracing::debug!("host = {}", host);
@@ -212,8 +222,8 @@ pub extern "C" fn start(config: GlobalConfigOptions) -> CResult {
         rx.map(|req| {
             async {
                 match req {
-                    Request::Get(p, slice, credentials, response, notifier) => {
-                        let client = match CLIENTS.try_get_with(credentials.get_hash(), connect(credentials)).await {
+                    Request::Get(p, slice, connection, response, notifier) => {
+                        let client = match CLIENTS.try_get_with(connection.get_hash(), connect(connection)).await {
                             Ok(client) => client,
                             Err(e) => {
                                 response.from_error(e);
@@ -265,8 +275,8 @@ pub extern "C" fn start(config: GlobalConfigOptions) -> CResult {
                             }
                         }
                     }
-                    Request::Put(p, slice, credentials, response, notifier) => {
-                        let client = match CLIENTS.try_get_with(credentials.get_hash(), connect(credentials)).await {
+                    Request::Put(p, slice, connection, response, notifier) => {
+                        let client = match CLIENTS.try_get_with(connection.get_hash(), connect(connection)).await {
                             Ok(client) => client,
                             Err(e) => {
                                 response.from_error(e);
@@ -301,7 +311,7 @@ pub extern "C" fn perform_get(
     path: *const c_char,
     buffer: *mut u8,
     size: usize,
-    credentials: *const AzureCredentials,
+    connection: *const AzureConnection,
     response: *mut Response,
     handle: *const c_void
 ) -> CResult {
@@ -310,11 +320,11 @@ pub extern "C" fn perform_get(
     let path = unsafe { std::ffi::CStr::from_ptr(path) };
     let path: Path = path.to_str().expect("invalid utf8").try_into().unwrap();
     let slice = unsafe { std::slice::from_raw_parts_mut(buffer, size) };
-    let credentials = unsafe { & (*credentials) };
+    let connection = unsafe { & (*connection) };
     let notifier = Notifier { handle };
     match SQ.get() {
         Some(sq) => {
-            match sq.try_send(Request::Get(path, slice, credentials, response, notifier)) {
+            match sq.try_send(Request::Get(path, slice, connection, response, notifier)) {
                 Ok(_) => CResult::Ok,
                 Err(async_channel::TrySendError::Full(_)) => {
                     CResult::Backoff
@@ -335,7 +345,7 @@ pub extern "C" fn perform_put(
     path: *const c_char,
     buffer: *const u8,
     size: usize,
-    credentials: *const AzureCredentials,
+    connection: *const AzureConnection,
     response: *mut Response,
     handle: *const c_void
 ) -> CResult {
@@ -344,11 +354,11 @@ pub extern "C" fn perform_put(
     let path = unsafe { std::ffi::CStr::from_ptr(path) };
     let path: Path = path.to_str().expect("invalid utf8").try_into().unwrap();
     let slice = unsafe { std::slice::from_raw_parts(buffer, size) };
-    let credentials = unsafe { & (*credentials) };
+    let connection = unsafe { & (*connection) };
     let notifier = Notifier { handle };
     match SQ.get() {
         Some(sq) => {
-            match sq.try_send(Request::Put(path, slice, credentials, response, notifier)) {
+            match sq.try_send(Request::Put(path, slice, connection, response, notifier)) {
                 Ok(_) => CResult::Ok,
                 Err(async_channel::TrySendError::Full(_)) => {
                     CResult::Backoff
