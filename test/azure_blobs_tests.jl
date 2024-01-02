@@ -1,4 +1,5 @@
 @testitem "Basic BlobStorage usage" setup=[InitializeRustStore] begin
+import CloudBase
 using CloudBase.CloudTest: Azurite
 using ObjectStore: blob_get!, blob_put, AzureConnection
 
@@ -7,7 +8,28 @@ using ObjectStore: blob_get!, blob_put, AzureConnection
 Azurite.with(; debug=true, public=false) do conf
     _credentials, _container = conf
     base_url = _container.baseurl
-    credentials = AzureConnection(_credentials.auth.account, _container.name, _credentials.auth.key, base_url)
+    credentials = AzureConnection(_credentials.auth.account, _container.name;
+                                  access_key = _credentials.auth.key,
+                                  host = base_url)
+
+    @testset "SAS token" begin
+        token = CloudBase.generateAccountSASToken(_credentials.auth.account, _credentials.auth.key)
+        sas_creds = AzureConnection(_credentials.auth.account, _container.name;
+                                    sas_token = token,
+                                    host = base_url)
+
+        input = "1,2,3,4,5,6,7,8,9,1\n" ^ 5
+        buffer = Vector{UInt8}(undef, 100)
+        @assert sizeof(input) == 100
+        @assert sizeof(buffer) == sizeof(input)
+
+        nbytes_written = blob_put(joinpath(base_url, "sastest100B.csv"), codeunits(input), sas_creds)
+        @test nbytes_written == 100
+
+        nbytes_read = blob_get!(joinpath(base_url, "sastest100B.csv"), buffer, sas_creds)
+        @test nbytes_read == 100
+        @test String(buffer[1:nbytes_read]) == input
+    end
 
     @testset "0B file, 0B buffer" begin
         buffer = Vector{UInt8}(undef, 0)
@@ -110,8 +132,10 @@ using ObjectStore: blob_get!, blob_put, AzureConnection
 Azurite.with(; debug=true, public=true) do conf
     _credentials, _container = conf
     base_url = _container.baseurl
-    credentials = AzureConnection(_credentials.auth.account, _container.name, _credentials.auth.key, base_url)
-    anon_connection = AzureConnection(_credentials.auth.account, _container.name, base_url)
+    credentials = AzureConnection(_credentials.auth.account, _container.name;
+                                  access_key = _credentials.auth.key,
+                                  host = base_url)
+    anon_connection = AzureConnection(_credentials.auth.account, _container.name; host=base_url)
 
     @testset "0B file, 0B buffer" begin
         buffer = Vector{UInt8}(undef, 0)

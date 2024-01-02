@@ -11,7 +11,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::Hasher;
 
 use object_store::{path::Path, ObjectStore};
-use object_store::azure::MicrosoftAzureBuilder;  // TODO aws::AmazonS3Builder
+use object_store::azure::{MicrosoftAzureBuilder, AzureConfigKey};  // TODO aws::AmazonS3Builder
 
 use moka::future::Cache;
 
@@ -79,6 +79,7 @@ pub struct AzureConnection {
     container: *const c_char,
     access_key: *const c_char,
     host: *const c_char,
+    sas_token: *const c_char,
     max_retries: usize,     // If 0, will use global config default
     retry_timeout_sec: u64, // If 0, will use global config default
 }
@@ -92,31 +93,34 @@ pub struct GlobalConfigOptions {
 impl AzureConnection {
     fn get_hash(&self) -> u64 {
         let mut hasher = DefaultHasher::new();
-        let (account, container, key, host) = self.as_cstr_tuple();
+        let (account, container, key, host, sas_token) = self.as_cstr_tuple();
         hasher.write(account.to_bytes());
         hasher.write(container.to_bytes());
         hasher.write(key.to_bytes());
         hasher.write(host.to_bytes());
+        hasher.write(sas_token.to_bytes());
         hasher.write_usize(self.max_retries);
         hasher.write_u64(self.retry_timeout_sec);
         hasher.finish()
     }
 
-    fn as_cstr_tuple(&self) -> (&CStr, &CStr, &CStr, &CStr) {
+    fn as_cstr_tuple(&self) -> (&CStr, &CStr, &CStr, &CStr, &CStr) {
         let account = unsafe { std::ffi::CStr::from_ptr(self.account) };
         let container = unsafe { std::ffi::CStr::from_ptr(self.container) };
         let key = unsafe { std::ffi::CStr::from_ptr(self.access_key) };
         let host = unsafe { std::ffi::CStr::from_ptr(self.host) };
-        (account, container, key, host)
+        let sas_token = unsafe { std::ffi::CStr::from_ptr(self.sas_token) };
+        (account, container, key, host, sas_token)
     }
 
-    fn to_string_tuple(&self) -> (String, String, String, String) {
-        let (account, container, key, host) = self.as_cstr_tuple();
+    fn to_string_tuple(&self) -> (String, String, String, String, String) {
+        let (account, container, key, host, sas_token) = self.as_cstr_tuple();
         (
             account.to_str().unwrap().to_string(),
             container.to_str().unwrap().to_string(),
             key.to_str().unwrap().to_string(),
-            host.to_str().unwrap().to_string()
+            host.to_str().unwrap().to_string(),
+            sas_token.to_str().unwrap().to_string()
         )
     }
 }
@@ -158,7 +162,7 @@ impl Response {
 }
 
 async fn connect(connection: &AzureConnection) -> anyhow::Result<Arc<dyn ObjectStore>> {
-    let (account, container, access_key, host) = connection.to_string_tuple();
+    let (account, container, access_key, host, sas_token) = connection.to_string_tuple();
     let max_retries = if connection.max_retries > 0 { connection.max_retries } else
                             { CONFIG.get().unwrap().max_retries };
     let retry_timeout = if connection.retry_timeout_sec > 0
@@ -179,6 +183,10 @@ async fn connect(connection: &AzureConnection) -> anyhow::Result<Arc<dyn ObjectS
         );
     if access_key != "" {
         azure = azure.with_access_key(access_key);
+    }
+
+    if sas_token != "" {
+        azure = azure.with_config(AzureConfigKey::SasKey, sas_token);
     }
 
     if host.len() > 0 {

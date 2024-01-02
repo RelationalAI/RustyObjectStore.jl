@@ -51,21 +51,18 @@ struct AzureConnection
     container::String
     access_key::String
     host::String
+    sas_token::String
     max_retries::UInt64
     retry_timeout_sec::UInt64
 
-    # Constructor with default max_retries and timeout
-    AzureConnection(account::String, container::String, access_key::String, host::String;
-                    max_retries=0, retry_timeout_sec=0) =
-        new(account, container, access_key, host, 0, 0)
-
-    # Constructor for anonymous (no key) access
-    AzureConnection(account::String, container::String, host::String;
-                    max_retries=0, retry_timeout_sec=0) =
-        new(account, container, "", host, max_retries, retry_timeout_sec)
+    AzureConnection(account::String, container::String;
+                    access_key::String="",
+                    host::String="",
+                    sas_token::String="",
+                    max_retries::UInt64=0x000000000,
+                    retry_timeout_sec::UInt64=0x000000000) =
+        new(account, container, access_key, host, sas_token, max_retries, retry_timeout_sec)
 end
-
-
 
 function Base.show(io::IO, connection::AzureConnection)
     print(io, "AzureCredentials("),
@@ -73,11 +70,12 @@ function Base.show(io::IO, connection::AzureConnection)
     print(io, repr(credentials.container), ", ")
     print(io, "\"*****\", ") # don't print the secret key
     print(io, repr(credentials.host), ", ")
+    print(io, repr(credentials.sas_token), ", ")
     print(io, repr(credentials.max_retries), ", ")
     print(io, repr(credentials.retry_timeout_sec), ")")
 end
 
-const _AzureConnectionFFI = Tuple{Cstring, Cstring, Cstring, Cstring, Culonglong, Culonglong}
+const _AzureConnectionFFI = Tuple{Cstring, Cstring, Cstring, Cstring, Cstring, Culonglong, Culonglong}
 
 function Base.cconvert(::Type{Ref{AzureConnection}}, connection::AzureConnection)
    connection_ffi = (
@@ -85,6 +83,7 @@ function Base.cconvert(::Type{Ref{AzureConnection}}, connection::AzureConnection
         Base.unsafe_convert(Cstring, Base.cconvert(Cstring, connection.container)),
         Base.unsafe_convert(Cstring, Base.cconvert(Cstring, connection.access_key)),
         Base.unsafe_convert(Cstring, Base.cconvert(Cstring, connection.host)),
+        Base.unsafe_convert(Cstring, Base.cconvert(Cstring, connection.sas_token)),
         connection.max_retries,
         connection.retry_timeout_sec
     )::_AzureConnectionFFI
