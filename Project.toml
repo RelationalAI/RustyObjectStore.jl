@@ -3,10 +3,12 @@ uuid = "1b5eed3d-1f46-4baa-87f3-a4a892b23610"
 version = "0.1.0"
 
 [deps]
+DocStringExtensions = "ffbed154-4ef7-542d-bbb7-c09d3a79fcae"
 object_store_ffi_jll = "0e112785-0821-598c-8835-9f07837e8d7b"
 
 [compat]
 CloudBase = "1"
+DocStringExtensions = "0.9"
 HTTP = "1"
 ReTestItems = "1"
 Sockets = "1"
