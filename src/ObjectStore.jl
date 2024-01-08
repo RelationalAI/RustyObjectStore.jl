@@ -1,30 +1,24 @@
 module ObjectStore
 
-
 export init_object_store, blob_get!, blob_put, AzureCredentials, ObjectStoreConfig
 
-const rust_lib_dir = @static if Sys.islinux() || Sys.isapple()
-    joinpath(
-        @__DIR__,
-        "..",
-        "deps",
-        "object_store_ffi",
-        "target",
-        "release",
-    )
-elseif Sys.iswindows()
-    @warn("The object_store_ffi library is currently unsupported on Windows.")
-end
+using object_store_ffi_jll
+using Base.Libc.Libdl: dlext
 
-const extension = @static if Sys.islinux()
-    "so"
-elseif Sys.isapple()
-    "dylib"
-elseif Sys.iswindows()
-    "dll"
+const rust_lib = if haskey(ENV, "OBJECT_STORE_LIB")
+    # For development, e.g. run `cargo build --release` and point to `target/release/` dir.
+    # Note this is set a precompilation time, as `ccall` needs this to be a `const`,
+    # so you need to restart Julia / recompile the package if you change it.
+    lib_path = realpath(joinpath(ENV["OBJECT_STORE_LIB"], "libobject_store_ffi.$(dlext)"))
+    @warn """
+        Using unreleased object_store_ffi library:
+            $(repr(contractuser(lib_path)))
+        This is only intended for local development and should not be used in production.
+        """
+    lib_path
+else
+    object_store_ffi_jll.libobject_store_ffi
 end
-
-const rust_lib = joinpath(rust_lib_dir, "libobject_store_ffi.$extension")
 
 struct ObjectStoreConfig
     max_retries::Culonglong
