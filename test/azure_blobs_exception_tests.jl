@@ -1,8 +1,7 @@
 @testitem "Basic BlobStorage exceptions" setup=[InitializeObjectStore] begin
     using CloudBase.CloudTest: Azurite
     import CloudBase
-    using ObjectStore: blob_get!, blob_put, AzureCredentials
-    import ObjectStore
+    using RustyObjectStore: RustyObjectStore, blob_get!, blob_put, AzureCredentials
 
     # For interactive testing, use Azurite.run() instead of Azurite.with()
     # conf, p = Azurite.run(; debug=true, public=false); atexit(() -> kill(p))
@@ -147,7 +146,7 @@
 
     @testset "multiple start" begin
         config = ObjectStoreConfig(5, 5)
-        res = @ccall ObjectStore.rust_lib.start(config::ObjectStoreConfig)::Cint
+        res = @ccall RustyObjectStore.rust_lib.start(config::ObjectStoreConfig)::Cint
         @test res == 1 # Rust CResult::Error
     end
 end # @testitem
@@ -164,7 +163,7 @@ end # @testitem
 @testitem "BlobStorage retries" setup=[InitializeObjectStore] begin
     using CloudBase.CloudTest: Azurite
     import CloudBase
-    using ObjectStore: blob_get!, blob_put, AzureCredentials
+    using RustyObjectStore: blob_get!, blob_put, AzureCredentials
     import HTTP
     import Sockets
 

@@ -3,5 +3,5 @@
 # for development reasons, but it should never be set in CI.
 @testitem "Using object_store_ffi_jll" begin
     using object_store_ffi_jll
-    @test ObjectStore.rust_lib == object_store_ffi_jll.libobject_store_ffi
+    @test RustyObjectStore.rust_lib == object_store_ffi_jll.libobject_store_ffi
 end

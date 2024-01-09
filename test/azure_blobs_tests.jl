@@ -1,6 +1,6 @@
 @testitem "Basic BlobStorage usage" setup=[InitializeObjectStore] begin
 using CloudBase.CloudTest: Azurite
-using ObjectStore: blob_get!, blob_put, AzureCredentials
+using RustyObjectStore: blob_get!, blob_put, AzureCredentials
 
 # For interactive testing, use Azurite.run() instead of Azurite.with()
 # conf, p = Azurite.run(; debug=true, public=false); atexit(() -> kill(p))
@@ -105,7 +105,7 @@ end # @testitem
 # TODO: implement a way for GET to be called without credentials
 @test_skip begin
 using CloudBase.CloudTest: Azurite
-using ObjectStore: blob_get!, blob_put, AzureCredentials
+using RustyObjectStore: blob_get!, blob_put, AzureCredentials
 
 # For interactive testing, use Azurite.run() instead of Azurite.with()
 # conf, p = Azurite.run(; debug=true, public=true); atexit(() -> kill(p))
