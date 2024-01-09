@@ -1,4 +1,4 @@
-name = "ObjectStore"
+name = "RustyObjectStore"
 uuid = "1b5eed3d-1f46-4baa-87f3-a4a892b23610"
 version = "0.1.0"
 

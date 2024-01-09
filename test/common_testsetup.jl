@@ -1,5 +1,5 @@
 @testsetup module InitializeObjectStore
-    using ObjectStore
+    using RustyObjectStore
     # Since we currently only support centralized configs, we need to have one that is compatible
     # with all the tests (some of the tests would take too long if we use default values).
     max_retries = 2

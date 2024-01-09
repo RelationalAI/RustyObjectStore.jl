@@ -1,6 +1,6 @@
 using ReTestItems
-using ObjectStore
+using RustyObjectStore
 
 withenv("RUST_BACKTRACE"=>1) do
-    runtests(ObjectStore, testitem_timeout=180, nworkers=1)
+    runtests(RustyObjectStore; testitem_timeout=180, nworkers=1)
 end

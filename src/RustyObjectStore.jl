@@ -1,4 +1,4 @@
-module ObjectStore
+module RustyObjectStore
 
 export init_object_store, blob_get!, blob_put, AzureCredentials, ObjectStoreConfig
 
