@@ -1,4 +1,4 @@
-@testset "AzureCredentials" begin
+@testitem "AzureCredentials" begin
     # access key is obscured when printing
     @test repr(AzureCredentials("a", "b", "c", "d")) == "AzureCredentials(\"a\", \"b\", \"*****\", \"d\")"
     # host is optional

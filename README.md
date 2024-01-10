@@ -2,8 +2,7 @@
 
 [![CI](https://github.com/RelationalAI/RustyObjectStore.jl/actions/workflows/CI.yml/badge.svg)](https://github.com/RelationalAI/RustyObjectStore.jl/actions/workflows/CI.yml)
 
-RustyObjectStore.jl is a Julia package for getting and putting data in cloud object stores,
-such as Azure Blob Storage and AWS S3.
+RustyObjectStore.jl is a Julia package for getting and putting data in cloud object stores, such as Azure Blob Storage and AWS S3.
 It is built on top of the Rust [object_store crate](https://docs.rs/object_store/).
 It provides a minimal API and focusses on high throughput.
 
