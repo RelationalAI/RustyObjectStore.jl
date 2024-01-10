@@ -111,7 +111,7 @@ See the existing [tests](./test) or the [ReTestItems documentation](https://gith
 
 #### Release Process
 
-New releases of RustyObjectStore.jl can be made using by incrementing the version number in the Project.toml file following [Semantic Versioning](semver.org),
+New releases of RustyObjectStore.jl can be made by incrementing the version number in the Project.toml file following [Semantic Versioning](semver.org),
 and then commenting on the commit that should be released with `@JuliaRegistrator register`
 (see [example](https://github.com/RelationalAI/RustyObjectStore.jl/commit/1b1ba5a198e76afe37f75a1d07e701deb818869c#comments)).
 The [JuliaRegistrator](https://github.com/JuliaRegistries/Registrator.jl) bot will reply to the comment and automatically open a PR to the [General](https://github.com/JuliaRegistries/General/) package registry, that should then automatically be merged within a few minutes.
