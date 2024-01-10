@@ -25,7 +25,7 @@
                 nbytes_read = blob_get!(joinpath(base_url, "test100B.csv"), buffer, credentials)
                 @test false # Should have thrown an error
             catch err
-                @test err isa ErrorException
+                @test err isa RustyObjectStore.GetException
                 @test err.msg == "failed to process get with error: Supplied buffer was too small"
             end
         end
@@ -39,7 +39,7 @@
                 blob_put(joinpath(base_url, "invalid_credentials.csv"), codeunits(input), bad_credentials)
                 @test false # Should have thrown an error
             catch e
-                @test e isa ErrorException
+                @test e isa RustyObjectStore.PutException
                 @test occursin("400 Bad Request", e.msg) # Should this be 403 Forbidden? We've seen that with invalid SAS tokens
                 @test occursin("Authentication information is not given in the correct format", e.msg)
             end
@@ -51,7 +51,7 @@
                 blob_get!(joinpath(base_url, "invalid_credentials.csv"), buffer, bad_credentials)
                 @test false # Should have thrown an error
             catch e
-                @test e isa ErrorException
+                @test e isa RustyObjectStore.GetException
                 @test occursin("400 Bad Request", e.msg)
                 @test occursin("Authentication information is not given in the correct format", e.msg)
             end
@@ -63,7 +63,7 @@
                 blob_get!(joinpath(base_url, "doesnt_exist.csv"), buffer, credentials)
                 @test false # Should have thrown an error
             catch e
-                @test e isa ErrorException
+                @test e isa RustyObjectStore.GetException
                 @test occursin("404 Not Found", e.msg)
                 @test occursin("The specified blob does not exist", e.msg)
             end
@@ -79,7 +79,7 @@
                 blob_put(joinpath(base_url, "invalid_credentials2.csv"), codeunits("a,b,c"), bad_credentials)
                 @test false # Should have thrown an error
             catch e
-                @test e isa ErrorException
+                @test e isa RustyObjectStore.PutException
                 @test occursin("404 Not Found", e.msg)
                 @test occursin("The specified container does not exist", e.msg)
             end
@@ -91,7 +91,7 @@
                 blob_get!(joinpath(base_url, "invalid_credentials2.csv"), buffer, bad_credentials)
                 @test false # Should have thrown an error
             catch e
-                @test e isa ErrorException
+                @test e isa RustyObjectStore.GetException
                 @test occursin("404 Not Found", e.msg)
                 @test occursin("The specified container does not exist", e.msg)
             end
@@ -105,7 +105,7 @@
                 blob_put(joinpath(base_url, "invalid_credentials3.csv"), codeunits("a,b,c"), bad_credentials)
                 @test false # Should have thrown an error
             catch e
-                @test e isa ErrorException
+                @test e isa RustyObjectStore.PutException
                 @test occursin("404 Not Found", e.msg)
                 @test occursin("The specified resource does not exist.", e.msg)
             end
@@ -117,7 +117,7 @@
                 blob_get!(joinpath(base_url, "invalid_credentials3.csv"), buffer, bad_credentials)
                 @test false # Should have thrown an error
             catch e
-                @test e isa ErrorException
+                @test e isa RustyObjectStore.GetException
                 @test occursin("404 Not Found", e.msg)
                 @test occursin("The specified resource does not exist.", e.msg)
             end
@@ -131,7 +131,7 @@
             blob_put(joinpath(_stale_base_url, "still_doesnt_exist.csv"), codeunits("a,b,c"), _stale_credentials)
             @test false # Should have thrown an error
         catch e
-            @test e isa ErrorException
+            @test e isa RustyObjectStore.PutException
             @test occursin("Connection refused", e.msg)
         end
 
@@ -139,7 +139,7 @@
             blob_get!(joinpath(_stale_base_url, "still_doesnt_exist.csv"), buffer, _stale_credentials)
             @test false # Should have thrown an error
         catch e
-            @test e isa ErrorException
+            @test e isa RustyObjectStore.GetException
             @test occursin("Connection refused", e.msg)
         end
     end
@@ -196,7 +196,8 @@ end # @testitem
             method === :PUT && blob_put(joinpath(baseurl, "blob"), codeunits("a,b,c"), creds)
             @test false # Should have thrown an error
         catch e
-            @test e isa ErrorException
+            method === :GET && @test e isa RustyObjectStore.GetException
+            method === :PUT && @test e isa RustyObjectStore.PutException
             @test occursin(string(response_status), e.msg)
             response_status < 500 && (@test occursin("response body from the dummy server", e.msg))
         finally
