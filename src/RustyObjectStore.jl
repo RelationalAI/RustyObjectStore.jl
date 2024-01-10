@@ -87,7 +87,7 @@ end
 # Arguments
 $TYPEDFIELDS
 """
-@kwdef struct AzureCredentials
+struct AzureCredentials
     "Azure account name"
     account::String
     "Azure container name"
@@ -95,7 +95,10 @@ $TYPEDFIELDS
     "Azure access key"
     key::String
     "(Optional) Alternative Azure host. For example, if using Azurite."
-    host::String=""
+    host::String
+    function AzureCredentials(account::String, container::String, key::String, host::String="")
+        return new(account, container, key, host)
+    end
 end
 function Base.show(io::IO, credentials::AzureCredentials)
     print(io, "AzureCredentials("),
