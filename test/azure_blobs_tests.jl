@@ -92,7 +92,7 @@ Azurite.with(; debug=true, public=false) do conf
         @test String(buffer[1:nbytes_read]) == input
     end
 
-    # Large files should eventually use multipart upload / download requests
+    # Large files use multipart upload / download requests
     @testset "20MB file, 20MB buffer" begin
         input = "1,2,3,4,5,6,7,8,9,1\n" ^ 1_000_000
         buffer = Vector{UInt8}(undef, 20_000_000)
@@ -103,6 +103,19 @@ Azurite.with(; debug=true, public=false) do conf
 
         nbytes_read = blob_get!(joinpath(base_url, "test100B.csv"), buffer, credentials)
         @test nbytes_read == 20_000_000
+        @test String(buffer[1:nbytes_read]) == input
+    end
+
+    @testset "1MB file, 20MB buffer" begin
+        input = "1,2,3,4,5,6,7,8,9,1\n" ^ 50_000
+
+        nbytes_written = blob_put(joinpath(base_url, "test100B.csv"), codeunits(input), credentials)
+        @test nbytes_written == 1_000_000
+
+        # Edge case for multpart download, file is less than threshold but buffer is greater
+        buffer = Vector{UInt8}(undef, 20_000_000)
+        nbytes_read = blob_get!(joinpath(base_url, "test100B.csv"), buffer, credentials)
+        @test nbytes_read == 1_000_000
         @test String(buffer[1:nbytes_read]) == input
     end
 

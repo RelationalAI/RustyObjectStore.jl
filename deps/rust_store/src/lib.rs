@@ -14,6 +14,7 @@ use object_store::{path::Path, ObjectStore};
 use object_store::azure::{MicrosoftAzureBuilder, AzureConfigKey};  // TODO aws::AmazonS3Builder
 
 use moka::future::Cache;
+use tokio::io::AsyncWriteExt;
 
 // Our global variables needed by our library at runtime. Note that we follow Rust's
 // safety rules here by making them immutable with write-exactly-once semantics using
@@ -239,6 +240,56 @@ pub extern "C" fn start(config: GlobalConfigOptions) -> CResult {
                                 return;
                             }
                         };
+
+                        // Multipart Get
+                        let part_size: usize = 8 * 1024 * 1024; // 8MB
+                        if slice.len() > part_size {
+                            match client.head(&p).await {
+                                Ok(result) => {
+                                    // If the object size happens to be smaller than part_size,
+                                    // then we will end up doing a single range get of the whole
+                                    // object.
+                                    let mut parts = result.size / part_size;
+                                    if result.size % part_size != 0 {
+                                        parts += 1;
+                                    }
+                                    let mut part_ranges = Vec::with_capacity(parts);
+                                    for i in 0..(parts-1) {
+                                        part_ranges.push((i*part_size)..((i+1)*part_size));
+                                    }
+                                    // Last part which handles sizes not divisible by part_size
+                                    part_ranges.push(((parts-1)*part_size)..result.size);
+
+                                    // TODO streaming ?
+                                    match client.get_ranges(&p, &part_ranges).await {
+                                        Ok(result_vec) => {
+                                            let mut accum: usize = 0;
+                                            for i in 0..result_vec.len() {
+                                                slice[accum..accum + result_vec[i].len()].copy_from_slice(&result_vec[i]);
+                                                accum += result_vec[i].len();
+                                            }
+                                            response.success(accum);
+                                            notifier.notify();
+                                            return;
+                                        }
+                                        Err(e) => {
+                                            tracing::warn!("{}", e);
+                                            response.from_error(e);
+                                            notifier.notify();
+                                            return;
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    tracing::warn!("{}", e);
+                                    response.from_error(e);
+                                    notifier.notify();
+                                    return;
+                                }
+                            }
+                        }
+
+                        // Single part Get
                         match client.get(&p).await {
                             Ok(result) => {
                                 let chunks = result.into_stream().collect::<Vec<_>>().await;
@@ -293,10 +344,31 @@ pub extern "C" fn start(config: GlobalConfigOptions) -> CResult {
                             }
                         };
                         let len = slice.len();
-                        match client.put(&p, slice.into()).await {
-                            Ok(_) => {
-                                response.success(len);
-                                notifier.notify();
+                        match client.put_multipart(&p).await {
+                            Ok((multipart_id, mut writer)) => {
+                                match writer.write_all(slice).await {
+                                    Ok(_) => {
+                                        match writer.flush().await {
+                                            Ok(_) => {
+                                                writer.shutdown().await.unwrap();
+                                                response.success(len);
+                                                notifier.notify();
+                                            }
+                                            Err(e) => {
+                                                client.abort_multipart(&p, &multipart_id).await.unwrap();
+                                                tracing::warn!("{}", e);
+                                                response.from_error(e);
+                                                notifier.notify();
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        client.abort_multipart(&p, &multipart_id).await.unwrap();
+                                        tracing::warn!("{}", e);
+                                        response.from_error(e);
+                                        notifier.notify();
+                                    }
+                                }
                                 return;
                             }
                             Err(e) => {
