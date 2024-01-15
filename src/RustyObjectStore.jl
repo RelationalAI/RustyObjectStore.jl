@@ -139,8 +139,8 @@ struct AzureConfig <: AsConfig
     )
         (
             !isnothing(storage_account_key)
-            ⊻ !isnothing(storage_sas_token)
-        ) || error("Must provide either a storage_account_key or a storage_sas_token")
+            && !isnothing(storage_sas_token)
+        ) && error("Should provide either a storage_account_key or a storage_sas_token")
 
         params = copy(opts.params)
 
