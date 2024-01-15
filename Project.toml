@@ -4,12 +4,14 @@ version = "0.1.0"
 
 [deps]
 DocStringExtensions = "ffbed154-4ef7-542d-bbb7-c09d3a79fcae"
+JSON3 = "0f8b85d8-7281-11e9-16c2-39a750bddbf1"
 object_store_ffi_jll = "0e112785-0821-598c-8835-9f07837e8d7b"
 
 [compat]
 CloudBase = "1"
 DocStringExtensions = "0.9"
 HTTP = "1"
+JSON3 = "1.13"
 ReTestItems = "1"
 Sockets = "1"
 Test = "1"
