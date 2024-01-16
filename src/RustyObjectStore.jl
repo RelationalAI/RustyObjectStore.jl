@@ -28,6 +28,26 @@ else
     object_store_ffi_jll.libobject_store_ffi
 end
 
+"""
+    $TYPEDEF
+
+Global configuration for the object store requests.
+
+# Keywords
+$TYPEDFIELDS
+"""
+@kwdef struct ObjectStoreConfig
+    "The number of worker threads for the native pool (0 == auto)"
+    n_threads::Culonglong
+end
+
+function Base.show(io::IO, config::ObjectStoreConfig)
+    print(io, "ObjectStoreConfig("),
+    print(io, "n_threads=", Int(config.n_threads), ")")
+end
+
+const DEFAULT_CONFIG = ObjectStoreConfig(n_threads=0)
+
 const _OBJECT_STORE_STARTED = Ref(false)
 const _INIT_LOCK::ReentrantLock = ReentrantLock()
 
@@ -38,23 +58,24 @@ end
 
 """
     init_object_store()
+    init_object_store(config::ObjectStoreConfig)
 
 Initialise object store.
 
 This starts a `tokio` runtime for handling `object_store` requests.
 It must be called before sending a request e.g. with `blob_get!` or `blob_put`.
-The runtime is only started once and cannot be re-initialised,
+The runtime is only started once and cannot be re-initialised with a different config,
 subsequent `init_object_store` calls have no effect.
 
 # Throws
 - `InitException`: if the runtime fails to start.
 """
-function init_object_store()
+function init_object_store(config::ObjectStoreConfig=DEFAULT_CONFIG)
     @lock _INIT_LOCK begin
         if _OBJECT_STORE_STARTED[]
             return nothing
         end
-        res = @ccall rust_lib.start()::Cint
+        res = @ccall rust_lib.start(config::ObjectStoreConfig)::Cint
         if res != 0
             throw(InitException("Failed to initialise object store runtime.", res))
         end
