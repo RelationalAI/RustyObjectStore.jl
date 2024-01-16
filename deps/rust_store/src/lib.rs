@@ -2,6 +2,7 @@ use futures_util::StreamExt;
 use once_cell::sync::Lazy;
 use once_cell::sync::OnceCell;
 use tokio::runtime::Runtime;
+use std::error::Error;
 use std::ffi::CStr;
 use std::ffi::CString;
 use std::ffi::{c_char, c_void};
@@ -162,6 +163,62 @@ impl Response {
     }
 }
 
+async fn multipart_get(slice: &'static mut [u8], path: &Path, client: &dyn ObjectStore) -> anyhow::Result<usize, Box<dyn Error>> {
+    let part_size: usize = 8 * 1024 * 1024; // 8MB
+    let result = client.head(&path).await?;
+    if result.size > slice.len() {
+        return Err("Supplied buffer was too small".into());
+    }
+
+    // If the object size happens to be smaller than part_size,
+    // then we will end up doing a single range get of the whole
+    // object.
+    let mut parts = result.size / part_size;
+    if result.size % part_size != 0 {
+        parts += 1;
+    }
+    let mut part_ranges = Vec::with_capacity(parts);
+    for i in 0..(parts-1) {
+        part_ranges.push((i*part_size)..((i+1)*part_size));
+    }
+    // Last part which handles sizes not divisible by part_size
+    part_ranges.push(((parts-1)*part_size)..result.size);
+
+    let result_vec = client.get_ranges(&path, &part_ranges).await?;
+    let accum = tokio::spawn(async move {
+        let mut accum: usize = 0;
+        for i in 0..result_vec.len() {
+            slice[accum..accum + result_vec[i].len()].copy_from_slice(&result_vec[i]);
+            accum += result_vec[i].len();
+        }
+        accum
+    }).await?;
+
+    return Ok(accum);
+}
+
+async fn multipart_put(slice: &'static [u8], path: &Path, client: &dyn ObjectStore) -> anyhow::Result<(), Box<dyn Error>> {
+    let (multipart_id, mut writer) = client.put_multipart(&path).await?;
+    match writer.write_all(slice).await {
+        Ok(_) => {
+            match writer.flush().await {
+                Ok(_) => {
+                    writer.shutdown().await?;
+                    return Ok(());
+                }
+                Err(e) => {
+                    client.abort_multipart(&path, &multipart_id).await?;
+                    return Err(Box::new(e));
+                }
+            }
+        }
+        Err(e) => {
+            client.abort_multipart(&path, &multipart_id).await?;
+            return Err(Box::new(e));
+        }
+    };
+}
+
 async fn connect(connection: &AzureConnection) -> anyhow::Result<Arc<dyn ObjectStore>> {
     let (account, container, access_key, host, sas_token) = connection.to_string_tuple();
     let max_retries = if connection.max_retries > 0 { connection.max_retries } else
@@ -244,41 +301,11 @@ pub extern "C" fn start(config: GlobalConfigOptions) -> CResult {
                         // Multipart Get
                         let part_size: usize = 8 * 1024 * 1024; // 8MB
                         if slice.len() > part_size {
-                            match client.head(&p).await {
-                                Ok(result) => {
-                                    // If the object size happens to be smaller than part_size,
-                                    // then we will end up doing a single range get of the whole
-                                    // object.
-                                    let mut parts = result.size / part_size;
-                                    if result.size % part_size != 0 {
-                                        parts += 1;
-                                    }
-                                    let mut part_ranges = Vec::with_capacity(parts);
-                                    for i in 0..(parts-1) {
-                                        part_ranges.push((i*part_size)..((i+1)*part_size));
-                                    }
-                                    // Last part which handles sizes not divisible by part_size
-                                    part_ranges.push(((parts-1)*part_size)..result.size);
-
-                                    // TODO streaming ?
-                                    match client.get_ranges(&p, &part_ranges).await {
-                                        Ok(result_vec) => {
-                                            let mut accum: usize = 0;
-                                            for i in 0..result_vec.len() {
-                                                slice[accum..accum + result_vec[i].len()].copy_from_slice(&result_vec[i]);
-                                                accum += result_vec[i].len();
-                                            }
-                                            response.success(accum);
-                                            notifier.notify();
-                                            return;
-                                        }
-                                        Err(e) => {
-                                            tracing::warn!("{}", e);
-                                            response.from_error(e);
-                                            notifier.notify();
-                                            return;
-                                        }
-                                    }
+                            match multipart_get(slice, &p, &client).await {
+                                Ok(accum) => {
+                                    response.success(accum);
+                                    notifier.notify();
+                                    return;
                                 }
                                 Err(e) => {
                                     tracing::warn!("{}", e);
@@ -344,38 +371,33 @@ pub extern "C" fn start(config: GlobalConfigOptions) -> CResult {
                             }
                         };
                         let len = slice.len();
-                        match client.put_multipart(&p).await {
-                            Ok((multipart_id, mut writer)) => {
-                                match writer.write_all(slice).await {
-                                    Ok(_) => {
-                                        match writer.flush().await {
-                                            Ok(_) => {
-                                                writer.shutdown().await.unwrap();
-                                                response.success(len);
-                                                notifier.notify();
-                                            }
-                                            Err(e) => {
-                                                client.abort_multipart(&p, &multipart_id).await.unwrap();
-                                                tracing::warn!("{}", e);
-                                                response.from_error(e);
-                                                notifier.notify();
-                                            }
-                                        }
-                                    }
-                                    Err(e) => {
-                                        client.abort_multipart(&p, &multipart_id).await.unwrap();
-                                        tracing::warn!("{}", e);
-                                        response.from_error(e);
-                                        notifier.notify();
-                                    }
+                        if len < 8 * 1024 * 1024 {
+                            match client.put(&p, slice.into()).await {
+                                Ok(_) => {
+                                    response.success(len);
+                                    notifier.notify();
+                                    return;
                                 }
-                                return;
+                                Err(e) => {
+                                    tracing::warn!("{}", e);
+                                    response.from_error(e);
+                                    notifier.notify();
+                                    return;
+                                }
                             }
-                            Err(e) => {
-                                tracing::warn!("{}", e);
-                                response.from_error(e);
-                                notifier.notify();
-                                return;
+                        } else {
+                            match multipart_put(slice, &p, &client).await {
+                                Ok(_) => {
+                                    response.success(len);
+                                    notifier.notify();
+                                    return;
+                                }
+                                Err(e) => {
+                                    tracing::warn!("{}", e);
+                                    response.from_error(e);
+                                    notifier.notify();
+                                    return;
+                                }
                             }
                         }
                     }
