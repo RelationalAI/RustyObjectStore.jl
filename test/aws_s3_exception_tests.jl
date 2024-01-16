@@ -1,17 +1,19 @@
-@testitem "Basic BlobStorage exceptions" setup=[InitializeObjectStore] begin
-    using CloudBase.CloudTest: Azurite
+@testitem "Basic S3 exceptions" setup=[InitializeObjectStore] begin
+    using CloudBase.CloudTest: Minio
     import CloudBase
-    using RustyObjectStore: RustyObjectStore, get!, put, ClientOptions, AzureConfig, AwsConfig
+    using RustyObjectStore: RustyObjectStore, get!, put, ClientOptions, AwsConfig
 
-    # For interactive testing, use Azurite.run() instead of Azurite.with()
-    # conf, p = Azurite.run(; debug=true, public=false); atexit(() -> kill(p))
-    Azurite.with(; debug=true, public=false) do conf
+    # For interactive testing, use Minio.run() instead of Minio.with()
+    # conf, p = Minio.run(; debug=true, public=false); atexit(() -> kill(p))
+    Minio.with(; debug=true, public=false) do conf
         _credentials, _container = conf
         base_url = _container.baseurl
-        config = AzureConfig(;
-            storage_account_name=_credentials.auth.account,
-            container_name=_container.name,
-            storage_account_key=_credentials.auth.key,
+        default_region = "us-east-1"
+        config = AwsConfig(;
+            region=default_region,
+            bucket_name=_container.name,
+            access_key_id=_credentials.access_key_id,
+            secret_access_key=_credentials.secret_access_key,
             host=base_url
         )
         global _stale_config = config
@@ -38,10 +40,11 @@
         @testset "Malformed credentials" begin
             input = "1,2,3,4,5,6,7,8,9,1\n" ^ 5
             buffer = Vector{UInt8}(undef, 100)
-            bad_config = AzureConfig(;
-                storage_account_name=_credentials.auth.account,
-                container_name=_container.name,
-                storage_account_key="",
+            bad_config = AwsConfig(;
+                region=default_region,
+                bucket_name=_container.name,
+                access_key_id=_credentials.access_key_id,
+                secret_access_key="",
                 host=base_url
             )
 
@@ -50,8 +53,8 @@
                 @test false # Should have thrown an error
             catch e
                 @test e isa RustyObjectStore.PutException
-                @test occursin("400 Bad Request", e.msg) # Should this be 403 Forbidden? We've seen that with invalid SAS tokens
-                @test occursin("Authentication information is not given in the correct format", e.msg)
+                @test occursin("403 Forbidden", e.msg)
+                @test occursin("Check your key and signing method", e.msg)
             end
 
             nbytes_written = put(codeunits(input), "invalid_credentials.csv", config)
@@ -62,8 +65,8 @@
                 @test false # Should have thrown an error
             catch e
                 @test e isa RustyObjectStore.GetException
-                @test occursin("400 Bad Request", e.msg)
-                @test occursin("Authentication information is not given in the correct format", e.msg)
+                @test occursin("403 Forbidden", e.msg)
+                @test occursin("Check your key and signing method", e.msg)
             end
         end
 
@@ -75,17 +78,18 @@
             catch e
                 @test e isa RustyObjectStore.GetException
                 @test occursin("404 Not Found", e.msg)
-                @test occursin("The specified blob does not exist", e.msg)
+                @test occursin("The specified key does not exist", e.msg)
             end
         end
 
         @testset "Non-existing container" begin
             non_existent_container_name = string(_container.name, "doesntexist")
             non_existent_base_url = replace(base_url, _container.name => non_existent_container_name)
-            bad_config = AzureConfig(;
-                storage_account_name=_credentials.auth.account,
-                container_name=non_existent_container_name,
-                storage_account_key=_credentials.auth.key,
+            bad_config = AwsConfig(;
+                region=default_region,
+                bucket_name=non_existent_container_name,
+                access_key_id=_credentials.access_key_id,
+                secret_access_key=_credentials.secret_access_key,
                 host=non_existent_base_url
             )
             buffer = Vector{UInt8}(undef, 100)
@@ -96,7 +100,7 @@
             catch e
                 @test e isa RustyObjectStore.PutException
                 @test occursin("404 Not Found", e.msg)
-                @test occursin("The specified container does not exist", e.msg)
+                @test occursin("The specified bucket does not exist", e.msg)
             end
 
             nbytes_written = put(codeunits("a,b,c"), "invalid_credentials2.csv", config)
@@ -108,42 +112,11 @@
             catch e
                 @test e isa RustyObjectStore.GetException
                 @test occursin("404 Not Found", e.msg)
-                @test occursin("The specified container does not exist", e.msg)
+                @test occursin("The specified bucket does not exist", e.msg)
             end
         end
-
-        @testset "Non-existing resource" begin
-            bad_config = AzureConfig(;
-                storage_account_name="non_existing_account",
-                container_name=_container.name,
-                storage_account_key=_credentials.auth.key,
-                host=base_url
-            )
-            buffer = Vector{UInt8}(undef, 100)
-
-            try
-                put(codeunits("a,b,c"), "invalid_credentials3.csv", bad_config)
-                @test false # Should have thrown an error
-            catch e
-                @test e isa RustyObjectStore.PutException
-                @test occursin("404 Not Found", e.msg)
-                @test occursin("The specified resource does not exist.", e.msg)
-            end
-
-            nbytes_written = put(codeunits("a,b,c"), "invalid_credentials3.csv", config)
-            @assert nbytes_written == 5
-
-            try
-                get!(buffer, "invalid_credentials3.csv", bad_config)
-                @test false # Should have thrown an error
-            catch e
-                @test e isa RustyObjectStore.GetException
-                @test occursin("404 Not Found", e.msg)
-                @test occursin("The specified resource does not exist.", e.msg)
-            end
-        end
-    end # Azurite.with
-    # Azurite is not running at this point
+    end # Minio.with
+    # Minio is not running at this point
     @testset "Connection error" begin
         buffer = Vector{UInt8}(undef, 100)
         # These test retry the connection error
@@ -170,19 +143,17 @@
     end
 end # @testitem
 
-### See Azure Blob Storage docs: https://learn.microsoft.com/en-us/rest/api/storageservices
-### - "Common REST API error codes":
-###   https://learn.microsoft.com/en-us/rest/api/storageservices/common-rest-api-error-codes
-### - "Azure Blob Storage error codes":
-###   https://learn.microsoft.com/en-us/rest/api/storageservices/blob-service-error-codes
-### - "Get Blob"
-###  https://learn.microsoft.com/en-us/rest/api/storageservices/get-blob
-### - "Put Blob"
-###  https://learn.microsoft.com/en-us/rest/api/storageservices/put-blob
-@testitem "BlobStorage retries" setup=[InitializeObjectStore] begin
-    using CloudBase.CloudTest: Azurite
+### See AWS S3 docs:
+### - "Error Responses - Amazon S3":
+###   https://docs.aws.amazon.com/AmazonS3/latest/API/ErrorResponses.html
+### - "GetObject"
+###  https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObject.html
+### - "PutObject"
+###  https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutObject.html
+@testitem "AWS S3 retries" setup=[InitializeObjectStore] begin
+    using CloudBase.CloudTest: Minio
     import CloudBase
-    using RustyObjectStore: get!, put, AzureConfig, ClientOptions
+    using RustyObjectStore: get!, put, AwsConfig, ClientOptions
     import HTTP
     import Sockets
 
@@ -193,13 +164,14 @@ end # @testitem
         @assert method === :GET || method === :PUT
         nrequests = Ref(0)
         response_body = "response body from the dummy server"
-        account = "myaccount"
-        container = "mycontainer"
-        shared_key_from_azurite = "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw=="
+        region = "us-east-1"
+        container = "mybucket"
+        dummy_access_key_id = "qUwJPLlmEtlCDXJ1OUzF"
+        dummy_secret_access_key = "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw=="
 
         (port, tcp_server) = Sockets.listenany(8081)
         http_server = HTTP.serve!(tcp_server) do request::HTTP.Request
-            if request.method == "GET" && request.target == "/$account/$container/_this_file_does_not_exist"
+            if request.method == "GET" && request.target == "/$container/_this_file_does_not_exist"
                 # This is the exploratory ping from connect_and_test in lib.rs
                 return HTTP.Response(404, "Yup, still doesn't exist")
             end
@@ -208,11 +180,12 @@ end # @testitem
             return response
         end
 
-        baseurl = "http://127.0.0.1:$port/$account/$container/"
-        conf = AzureConfig(;
-            storage_account_name=account,
-            container_name=container,
-            storage_account_key=shared_key_from_azurite,
+        baseurl = "http://127.0.0.1:$port"
+        conf = AwsConfig(;
+            region=region,
+            bucket_name=container,
+            access_key_id=dummy_access_key_id,
+            secret_access_key=dummy_secret_access_key,
             host=baseurl,
             opts=ClientOptions(;
                 max_retries=max_retries,
@@ -239,7 +212,9 @@ end # @testitem
     @testset "400: Bad Request" begin
         # Returned when there's an error in the request URI, headers, or body. The response body
         # contains an error message explaining what the specific problem is.
-        # See https://learn.microsoft.com/en-us/rest/api/storageservices/blob-service-error-codes
+        # See https://docs.aws.amazon.com/AmazonS3/latest/API/ErrorResponses.html
+        # AWS S3 can also respond with this code for other unrecoverable cases such as when
+        # an upload exceeds the maximum allowed object size
         # See https://www.rfc-editor.org/rfc/rfc9110#status.400
         nrequests = test_status(:GET, 400)
         @test nrequests == 1
@@ -258,6 +233,7 @@ end # @testitem
 
     @testset "404: Not Found" begin
         # Returned when container not found or blob not found
+        # See https://docs.aws.amazon.com/AmazonS3/latest/API/ErrorResponses.html
         # See https://learn.microsoft.com/en-us/rest/api/storageservices/blob-service-error-codes
         # See https://www.rfc-editor.org/rfc/rfc9110#status.404
         nrequests = test_status(:GET, 404)
@@ -274,6 +250,7 @@ end # @testitem
 
     @testset "409: Conflict" begin
         # Returned when write operations conflict.
+        # See https://docs.aws.amazon.com/AmazonS3/latest/API/ErrorResponses.html
         # See https://learn.microsoft.com/en-us/rest/api/storageservices/blob-service-error-codes
         # See https://www.rfc-editor.org/rfc/rfc9110#status.409
         nrequests = test_status(:GET, 409)
@@ -284,7 +261,7 @@ end # @testitem
 
     @testset "412: Precondition Failed" begin
         # Returned when an If-Match or If-None-Match header's condition evaluates to false
-        # See https://learn.microsoft.com/en-us/rest/api/storageservices/put-blob#blob-custom-properties
+        # See https://docs.aws.amazon.com/AmazonS3/latest/API/ErrorResponses.html
         # See https://www.rfc-editor.org/rfc/rfc9110#status.412
         nrequests = test_status(:GET, 412)
         @test nrequests == 1
@@ -293,12 +270,6 @@ end # @testitem
     end
 
     @testset "413: Content Too Large" begin
-        # See https://learn.microsoft.com/en-us/rest/api/storageservices/put-blob#remarks
-        #   If you attempt to upload either a block blob that's larger than the maximum
-        #   permitted size for that service version or a page blob that's larger than 8 TiB,
-        #   the service returns status code 413 (Request Entity Too Large). Blob Storage also
-        #   returns additional information about the error in the response, including the
-        #   maximum permitted blob size, in bytes.
         # See https://www.rfc-editor.org/rfc/rfc9110#status.413
         nrequests = test_status(:PUT, 413)
         @test nrequests == 1
@@ -312,8 +283,8 @@ end # @testitem
         @test nrequests == 1
         # See https://www.rfc-editor.org/rfc/rfc9110#field.retry-after
         # TODO: We probably should respect the Retry-After header, but we currently don't
-        # (and we don't know if Azure actually sets it)
-        # This can happen when Azure is throttling us, so it might be a good idea to retry with some
+        # (and we don't know if AWS actually sets it)
+        # This can happen when AWS is throttling us, so it might be a good idea to retry with some
         # larger initial backoff (very eager retries probably only make the situation worse).
         nrequests = test_status(:GET, 429, ["Retry-After" => 10])
         @test nrequests == 1 + max_retries broken=true
@@ -340,13 +311,7 @@ end # @testitem
         #   which will likely be alleviated after some delay. The server MAY send a Retry-After
         #   header field (Section 10.2.3) to suggest an appropriate amount of time for the
         #   client to wait before retrying the request.
-        # See https://learn.microsoft.com/en-us/rest/api/storageservices/common-rest-api-error-codes
-        #   An operation on any of the Azure Storage services can return the following error codes:
-        #   Error code 	HTTP status code 	        User message
-        #   ServerBusy 	Service Unavailable (503) 	The server is currently unable to receive requests. Please retry your request.
-        #   ServerBusy 	Service Unavailable (503) 	Ingress is over the account limit.
-        #   ServerBusy 	Service Unavailable (503) 	Egress is over the account limit.
-        #   ServerBusy 	Service Unavailable (503) 	Operations per second is over the account limit.
+        # See https://docs.aws.amazon.com/AmazonS3/latest/API/ErrorResponses.html
         nrequests = test_status(:GET, 503)
         @test nrequests == 1 + max_retries
         nrequests = test_status(:PUT, 503)

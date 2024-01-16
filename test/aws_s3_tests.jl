@@ -1,16 +1,18 @@
-@testitem "Basic BlobStorage usage" setup=[InitializeObjectStore] begin
-using CloudBase.CloudTest: Azurite
-using RustyObjectStore: get!, put, AzureConfig, ClientOptions
+@testitem "Basic AWS S3 usage" setup=[InitializeObjectStore] begin
+using CloudBase.CloudTest: Minio
+using RustyObjectStore: get!, put, AwsConfig, ClientOptions
 
-# For interactive testing, use Azurite.run() instead of Azurite.with()
-# conf, p = Azurite.run(; debug=true, public=false); atexit(() -> kill(p))
-Azurite.with(; debug=true, public=false) do conf
+# For interactive testing, use Minio.run() instead of Minio.with()
+# conf, p = Minio.run(; debug=true, public=false); atexit(() -> kill(p))
+Minio.with(; debug=true, public=false) do conf
     _credentials, _container = conf
     base_url = _container.baseurl
-    config = AzureConfig(;
-        storage_account_name=_credentials.auth.account,
-        container_name=_container.name,
-        storage_account_key=_credentials.auth.key,
+    default_region = "us-east-1"
+    config = AwsConfig(;
+        region=default_region,
+        bucket_name=_container.name,
+        access_key_id=_credentials.access_key_id,
+        secret_access_key=_credentials.secret_access_key,
         host=base_url
     )
 
@@ -106,24 +108,28 @@ end # Azurite.with
 end # @testitem
 
 # NOTE: PUT on azure always requires credentials, while GET on public containers doesn't
-@testitem "Basic BlobStorage usage (anonymous read enabled)" setup=[InitializeObjectStore] begin
-using CloudBase.CloudTest: Azurite
-using RustyObjectStore: get!, put, AzureConfig, ClientOptions
+@testitem "Basic AWS S3 usage (anonymous read enabled)" setup=[InitializeObjectStore] begin
+# TODO: currently object_store defaults to Instance credentials when no other credentials are supplied
+@test_skip begin
+using CloudBase.CloudTest: Minio
+using RustyObjectStore: get!, put, AwsConfig, ClientOptions
 
-# For interactive testing, use Azurite.run() instead of Azurite.with()
-# conf, p = Azurite.run(; debug=true, public=true); atexit(() -> kill(p))
-Azurite.with(; debug=true, public=true) do conf
+# For interactive testing, use Minio.run() instead of Azurite.with()
+# conf, p = Minio.run(; debug=true, public=true); atexit(() -> kill(p))
+Minio.with(; debug=true, public=true) do conf
     _credentials, _container = conf
     base_url = _container.baseurl
-    config = AzureConfig(;
-        storage_account_name=_credentials.auth.account,
-        container_name=_container.name,
-        storage_account_key=_credentials.auth.key,
+    default_region = "us-east-1"
+    config = AwsConfig(;
+        region=default_region,
+        bucket_name=_container.name,
+        access_key_id=_credentials.access_key_id,
+        secret_access_key=_credentials.secret_access_key,
         host=base_url
     )
-    config_no_creds = AzureConfig(;
-        storage_account_name=_credentials.auth.account,
-        container_name=_container.name,
+    config_no_creds = AwsConfig(;
+        region=default_region,
+        bucket_name=_container.name,
         host=base_url
     )
 
@@ -215,4 +221,5 @@ Azurite.with(; debug=true, public=true) do conf
         @test String(buffer[1:nbytes_read]) == input
     end
 end # Azurite.with
+end # @test_skip
 end # @testitem

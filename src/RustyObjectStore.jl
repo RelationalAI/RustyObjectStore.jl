@@ -169,11 +169,12 @@ as_config(wrapper::AzureConfig) = wrapper.config
     $TYPEDEF
 
 # Keyword Arguments
-- `region::String`: AWS region.
-- `bucket_name::String`: AWS bucket name.
-- `access_key_id::Option{String}`: (Optional) AWS access key id.
-- `secret_access_key::Option{String}`: (Optional) AWS secret access key.
-- `session_token::Option{String}`: (Optional) AWS session_token.
+- `region::String`: AWS S3 region.
+- `bucket_name::String`: AWS S3 bucket name.
+- `access_key_id::Option{String}`: (Optional) AWS S3 access key id.
+- `secret_access_key::Option{String}`: (Optional) AWS S3 secret access key.
+- `session_token::Option{String}`: (Optional) AWS S3 session_token.
+- `host::Option{String}`: (Optional) Alternative S3 host. For example, if using Minio.
 - `opts::ClientOptions`: (Optional) Client configuration options.
 """
 struct AwsConfig <: AsConfig
@@ -184,6 +185,7 @@ struct AwsConfig <: AsConfig
         access_key_id::Option{String} = nothing,
         secret_access_key::Option{String} = nothing,
         session_token::Option{String} = nothing,
+        host::Option{String} = nothing,
         opts::ClientOptions = ClientOptions()
     )
         params = copy(opts.params)
@@ -201,6 +203,10 @@ struct AwsConfig <: AsConfig
 
         if !isnothing(session_token)
             params["aws_session_token"] = session_token
+        end
+
+        if !isnothing(host)
+            params["minio_host"] = host
         end
 
         return new(Config("s3://$(bucket_name)/", params))
