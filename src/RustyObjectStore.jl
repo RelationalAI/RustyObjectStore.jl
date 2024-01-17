@@ -102,26 +102,36 @@ end
     $TYPEDEF
 
 # Keyword Arguments
-- `request_timeout_secs::Int`: (Optional) Client request timeout in seconds.
-- `connect_timeout_secs::Int`: (Optional) Client connection timeout in seconds.
-- `max_retries::Int`: (Optional) Maximum number of retry attempts.
-- `retry_timeout_secs::Int`: (Optional) Maximum amount of time from the initial request after which no further retries will be attempted (in seconds).
+- `request_timeout_secs::Option{Int}`: (Optional) Client request timeout in seconds.
+- `connect_timeout_secs::Option{Int}`: (Optional) Client connection timeout in seconds.
+- `max_retries::Option{Int}`: (Optional) Maximum number of retry attempts.
+- `retry_timeout_secs::Option{Int}`: (Optional) Maximum amount of time from the initial request after which no further retries will be attempted (in seconds).
 """
 struct ClientOptions
     params::Dict{String, String}
 
     function ClientOptions(;
-        request_timeout_secs::Int = 30,
-        connect_timeout_secs::Int = 5,
-        max_retries::Int = 10,
-        retry_timeout_secs::Int = 150
+        request_timeout_secs::Option{Int} = nothing,
+        connect_timeout_secs::Option{Int} = nothing,
+        max_retries::Option{Int} = nothing,
+        retry_timeout_secs::Option{Int} = nothing
     )
-        params = Dict(
-            "timeout" => "$(string(request_timeout_secs))s",
-            "connect_timeout" => "$(string(connect_timeout_secs))s",
-            "max_retries" => string(max_retries),
-            "retry_timeout_secs" => string(retry_timeout_secs)
-        )
+        params = Dict()
+        if !isnothing(request_timeout_secs)
+            params["timeout"] = "$(string(request_timeout_secs))s"
+        end
+
+        if !isnothing(connect_timeout_secs)
+            params["connect_timeout"] = "$(string(connect_timeout_secs))s"
+        end
+
+        if !isnothing(max_retries)
+            params["max_retries"] = string(max_retries)
+        end
+
+        if !isnothing(retry_timeout_secs)
+            params["retry_timeout_secs"] = string(retry_timeout_secs)
+        end
 
         return new(params)
     end
