@@ -234,7 +234,6 @@ end # @testitem
     @testset "404: Not Found" begin
         # Returned when container not found or blob not found
         # See https://docs.aws.amazon.com/AmazonS3/latest/API/ErrorResponses.html
-        # See https://learn.microsoft.com/en-us/rest/api/storageservices/blob-service-error-codes
         # See https://www.rfc-editor.org/rfc/rfc9110#status.404
         nrequests = test_status(:GET, 404)
         @test nrequests == 1
@@ -251,7 +250,6 @@ end # @testitem
     @testset "409: Conflict" begin
         # Returned when write operations conflict.
         # See https://docs.aws.amazon.com/AmazonS3/latest/API/ErrorResponses.html
-        # See https://learn.microsoft.com/en-us/rest/api/storageservices/blob-service-error-codes
         # See https://www.rfc-editor.org/rfc/rfc9110#status.409
         nrequests = test_status(:GET, 409)
         @test nrequests == 1

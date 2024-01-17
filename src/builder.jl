@@ -2,6 +2,34 @@ abstract type Builder end
 
 function add_entry(b::Builder, key::String, value::String) end
 
+"""
+    $TYPEDEF
+
+Usage samples:
+
+azure_config = ConfigBuilder() |>
+    with_request_timeout_secs(30) |>
+    with_connect_timeout_secs(5) |>
+    with_max_retries(15) |>
+    with_retry_timeout_secs(150) |>
+    azure |>
+    with_storage_account_name("test") |>
+    with_container_name("test") |>
+    with_storage_account_key("key") |>
+    build
+
+aws_config = ConfigBuilder() |>
+    with_request_timeout_secs(30) |>
+    with_connect_timeout_secs(5) |>
+    with_max_retries(15) |>
+    with_retry_timeout_secs(150) |>
+    aws |>
+    with_region("us-east-1") |>
+    with_bucket_name("test-bucket") |>
+    with_access_key("id", "secret") |>
+    with_sts_token("id", "secret", "session") |>
+    build
+"""
 struct ConfigBuilder <: Builder
     params::Dict{String, String}
     function ConfigBuilder()
@@ -95,10 +123,9 @@ function build(b::AzureConfigBuilder)
     haskey(dict, "azure_container_name") || error("Missing container_name")
     haskey(dict, "azure_storage_account_name") || error("Missing storage_account_name")
     (
-        haskey(dict, "azure_storage_account_key")
-        ⊻ haskey(dict, "azure_storage_sas_token")
-    ) || error("Must provide either a storage_account_key or a storage_sas_token")
-    @show b
+        !haskey(dict, "azure_storage_account_key")
+        && !haskey(dict, "azure_storage_sas_token")
+    ) && error("Should provide either a storage_account_key or a storage_sas_token")
     return Config("az://$(dict["azure_container_name"])/", dict)
 end
 
@@ -141,29 +168,5 @@ function build(b::AwsConfigBuilder)
     dict = b.params
     haskey(dict, "aws_bucket_name") || error("Missing bucket_name")
     haskey(dict, "aws_region") || error("Missing region")
-    @show b
     return Config("s3://$(dict["aws_bucket_name"])/", dict)
 end
-
-# azure_config = ConfigBuilder() |>
-#     with_request_timeout_secs(30) |>
-#     with_connect_timeout_secs(5) |>
-#     with_max_retries(15) |>
-#     with_retry_timeout_secs(150) |>
-#     azure |>
-#     with_storage_account_name("aguedes") |>
-#     with_container_name("test-blob") |>
-#     with_storage_account_key("test") |>
-#     build
-#
-# aws_config = ConfigBuilder() |>
-#     with_request_timeout_secs(30) |>
-#     with_connect_timeout_secs(5) |>
-#     with_max_retries(15) |>
-#     with_retry_timeout_secs(150) |>
-#     aws |>
-#     with_region("us-east-1") |>
-#     with_bucket_name("sf") |>
-#     with_access_key("id", "secret") |>
-#     with_sts_token("id", "secret", "session") |>
-#     build
