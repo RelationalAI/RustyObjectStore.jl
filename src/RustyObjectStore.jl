@@ -36,17 +36,31 @@ Global configuration for the object store requests.
 # Keywords
 $TYPEDFIELDS
 """
-@kwdef struct ObjectStoreConfig
+@kwdef struct StaticConfig
     "The number of worker threads for the native pool (0 == auto)"
     n_threads::Culonglong
+    "The maximum capacity for the client cache"
+    cache_capacity::Culonglong
+    "The time-to-live in seconds for entries in the client cache"
+    cache_ttl_secs::Culonglong
+    "The time-to-idle in seconds for entries in the client cache"
+    cache_tti_secs::Culonglong
 end
 
-function Base.show(io::IO, config::ObjectStoreConfig)
-    print(io, "ObjectStoreConfig("),
-    print(io, "n_threads=", Int(config.n_threads), ")")
+function Base.show(io::IO, config::StaticConfig)
+    print(io, "StaticConfig("),
+    print(io, "n_threads=", Int(config.n_threads), ",")
+    print(io, "cache_capacity=", Int(config.cache_capacity), ",")
+    print(io, "cache_ttl_secs=", Int(config.cache_ttl_secs), ",")
+    print(io, "cache_tti_secs=", Int(config.cache_tti_secs), ")")
 end
 
-const DEFAULT_CONFIG = ObjectStoreConfig(n_threads=0)
+const DEFAULT_CONFIG = StaticConfig(
+    n_threads=0,
+    cache_capacity=20,
+    cache_ttl_secs=30 * 60,
+    cache_tti_secs=5 * 60
+)
 
 const _OBJECT_STORE_STARTED = Ref(false)
 const _INIT_LOCK::ReentrantLock = ReentrantLock()
@@ -58,7 +72,7 @@ end
 
 """
     init_object_store()
-    init_object_store(config::ObjectStoreConfig)
+    init_object_store(config::StaticConfig)
 
 Initialise object store.
 
@@ -70,12 +84,12 @@ subsequent `init_object_store` calls have no effect.
 # Throws
 - `InitException`: if the runtime fails to start.
 """
-function init_object_store(config::ObjectStoreConfig=DEFAULT_CONFIG)
+function init_object_store(config::StaticConfig=DEFAULT_CONFIG)
     @lock _INIT_LOCK begin
         if _OBJECT_STORE_STARTED[]
             return nothing
         end
-        res = @ccall rust_lib.start(config::ObjectStoreConfig)::Cint
+        res = @ccall rust_lib.start(config::StaticConfig)::Cint
         if res != 0
             throw(InitException("Failed to initialise object store runtime.", res))
         end
