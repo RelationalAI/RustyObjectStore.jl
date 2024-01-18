@@ -17,20 +17,26 @@ using RustyObjectStore
 init_object_store()
 ```
 
-Requests are sent via calling `blob_put` or `blob_get!`, providing the location of the object to put/get, either the data to send or a buffer that will receive data, and credentials.
-For `blob_put` the data must be a vector of bytes (`UInt8`).
-For `blob_get!` the buffer must be a vector into which bytes (`UInt8`) can be written.
+Requests are sent via calling `put_object` or `get_object!`, providing the location of the object to put/get, either the data to send or a buffer that will receive data, and credentials.
+For `put_object` the data must be a vector of bytes (`UInt8`).
+For `get_object!` the buffer must be a vector into which bytes (`UInt8`) can be written.
 ```julia
-credentials = AzureCredentials("my_account", "my_container", "my_key")
+using RustyObjectStore: get_object!, put_object, AzureConfig
+
+config = AzureConfig(
+    storage_account_name="my_account",
+    container_name="my_container",
+    storage_account_key="my_key"
+)
 input = "1,2,3,4,5,6,7,8,9,0\n" ^ 5  #  100 B
 
-nbytes_written = blob_put("path/to/example.csv", codeunits(input), credentials)
+nbytes_written = put_object(codeunits(input), "path/to/example.csv", config)
 @assert nbytes_written == 100
 
 buffer = Vector{UInt8}(undef, 1000)  # 1000 B
 @assert sizeof(buffer) > sizeof(input)
 
-nbytes_read = blob_get!("path/to/example.csv", buffer, credentials)
+nbytes_read = get_object!(buffer, "path/to/example.csv", config)
 @assert nbytes_read == 100
 @assert String(buffer[1:nbytes_read]) == input
 ```

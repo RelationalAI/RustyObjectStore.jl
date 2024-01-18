@@ -1,28 +1,28 @@
 @testsetup module ReadWriteCases
-using RustyObjectStore: get!, put, AsConfig
+using RustyObjectStore: get_object!, put_object, AbstractConfig
 
 using Test: @testset, @test
 
 export run_read_write_test_cases
 
-function run_read_write_test_cases(read_config::AsConfig, write_config::AsConfig = read_config)
+function run_read_write_test_cases(read_config::AbstractConfig, write_config::AbstractConfig = read_config)
     @testset "0B file, 0B buffer" begin
         buffer = Vector{UInt8}(undef, 0)
 
-        nbytes_written = put(codeunits(""), "empty.csv", write_config)
+        nbytes_written = put_object(codeunits(""), "empty.csv", write_config)
         @test nbytes_written == 0
 
-        nbytes_read = get!(buffer, "empty.csv", read_config)
+        nbytes_read = get_object!(buffer, "empty.csv", read_config)
         @test nbytes_read == 0
     end
 
     @testset "0B file, 1KB buffer" begin
         buffer = Vector{UInt8}(undef, 1000)
 
-        nbytes_written = put(codeunits(""), "empty.csv", write_config)
+        nbytes_written = put_object(codeunits(""), "empty.csv", write_config)
         @test nbytes_written == 0
 
-        nbytes_read = get!(buffer, "empty.csv", read_config)
+        nbytes_read = get_object!(buffer, "empty.csv", read_config)
         @test nbytes_read == 0
     end
 
@@ -32,10 +32,10 @@ function run_read_write_test_cases(read_config::AsConfig, write_config::AsConfig
         @assert sizeof(input) == 100
         @assert sizeof(buffer) == sizeof(input)
 
-        nbytes_written = put(codeunits(input), "test100B.csv", write_config)
+        nbytes_written = put_object(codeunits(input), "test100B.csv", write_config)
         @test nbytes_written == 100
 
-        nbytes_read = get!(buffer, "test100B.csv", read_config)
+        nbytes_read = get_object!(buffer, "test100B.csv", read_config)
         @test nbytes_read == 100
         @test String(buffer[1:nbytes_read]) == input
     end
@@ -46,10 +46,10 @@ function run_read_write_test_cases(read_config::AsConfig, write_config::AsConfig
         @assert sizeof(input) == 100
         @assert sizeof(buffer) > sizeof(input)
 
-        nbytes_written = put(codeunits(input), "test100B.csv", write_config)
+        nbytes_written = put_object(codeunits(input), "test100B.csv", write_config)
         @test nbytes_written == 100
 
-        nbytes_read = get!(buffer, "test100B.csv", read_config)
+        nbytes_read = get_object!(buffer, "test100B.csv", read_config)
         @test nbytes_read == 100
         @test String(buffer[1:nbytes_read]) == input
     end
@@ -59,10 +59,10 @@ function run_read_write_test_cases(read_config::AsConfig, write_config::AsConfig
         buffer = Vector{UInt8}(undef, 1_000_000)
         @assert sizeof(input) == 1_000_000 == sizeof(buffer)
 
-        nbytes_written = put(codeunits(input), "test100B.csv", write_config)
+        nbytes_written = put_object(codeunits(input), "test100B.csv", write_config)
         @test nbytes_written == 1_000_000
 
-        nbytes_read = get!(buffer, "test100B.csv", read_config)
+        nbytes_read = get_object!(buffer, "test100B.csv", read_config)
         @test nbytes_read == 1_000_000
         @test String(buffer[1:nbytes_read]) == input
     end
@@ -73,10 +73,10 @@ function run_read_write_test_cases(read_config::AsConfig, write_config::AsConfig
         buffer = Vector{UInt8}(undef, 20_000_000)
         @assert sizeof(input) == 20_000_000 == sizeof(buffer)
 
-        nbytes_written = put(codeunits(input), "test100B.csv", write_config)
+        nbytes_written = put_object(codeunits(input), "test100B.csv", write_config)
         @test nbytes_written == 20_000_000
 
-        nbytes_read = get!(buffer, "test100B.csv", read_config)
+        nbytes_read = get_object!(buffer, "test100B.csv", read_config)
         @test nbytes_read == 20_000_000
         @test String(buffer[1:nbytes_read]) == input
     end
@@ -86,10 +86,10 @@ function run_read_write_test_cases(read_config::AsConfig, write_config::AsConfig
         buffer = Vector{UInt8}(undef, 21_000_000)
         @assert sizeof(input) < sizeof(buffer)
 
-        nbytes_written = put(codeunits(input), "test100B.csv", write_config)
+        nbytes_written = put_object(codeunits(input), "test100B.csv", write_config)
         @test nbytes_written == 20_000_000
 
-        nbytes_read = get!(buffer, "test100B.csv", read_config)
+        nbytes_read = get_object!(buffer, "test100B.csv", read_config)
         @test nbytes_read == 20_000_000
         @test String(buffer[1:nbytes_read]) == input
     end
@@ -146,7 +146,7 @@ end # @testitem
 
 @testitem "Basic AWS S3 usage" setup=[InitializeObjectStore, ReadWriteCases] begin
 using CloudBase.CloudTest: Minio
-using RustyObjectStore: AwsConfig, ClientOptions
+using RustyObjectStore: AWSConfig, ClientOptions
 
 # For interactive testing, use Minio.run() instead of Minio.with()
 # conf, p = Minio.run(; debug=true, public=false); atexit(() -> kill(p))
@@ -154,7 +154,7 @@ Minio.with(; debug=true, public=false) do conf
     _credentials, _container = conf
     base_url = _container.baseurl
     default_region = "us-east-1"
-    config = AwsConfig(;
+    config = AWSConfig(;
         region=default_region,
         bucket_name=_container.name,
         access_key_id=_credentials.access_key_id,
@@ -169,9 +169,10 @@ end # @testitem
 
 @testitem "Basic AWS S3 usage (anonymous read enabled)" setup=[InitializeObjectStore, ReadWriteCases] begin
 # TODO: currently object_store defaults to Instance credentials when no other credentials are supplied
+# (see https://github.com/RelationalAI/RustyObjectStore.jl/issues/22)
 @test_skip begin
 using CloudBase.CloudTest: Minio
-using RustyObjectStore: AwsConfig, ClientOptions
+using RustyObjectStore: AWSConfig, ClientOptions
 
 # For interactive testing, use Minio.run() instead of Azurite.with()
 # conf, p = Minio.run(; debug=true, public=true); atexit(() -> kill(p))
@@ -179,14 +180,14 @@ Minio.with(; debug=true, public=true) do conf
     _credentials, _container = conf
     base_url = _container.baseurl
     default_region = "us-east-1"
-    config = AwsConfig(;
+    config = AWSConfig(;
         region=default_region,
         bucket_name=_container.name,
         access_key_id=_credentials.access_key_id,
         secret_access_key=_credentials.secret_access_key,
         host=base_url
     )
-    config_no_creds = AwsConfig(;
+    config_no_creds = AWSConfig(;
         region=default_region,
         bucket_name=_container.name,
         host=base_url

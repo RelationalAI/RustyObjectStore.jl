@@ -4,21 +4,21 @@
         storage_account_name="a",
         container_name="b",
         storage_account_key="c"
-    )) == "RustyObjectStore.AzureConfig(Config(:url => \"az://b/\", :azure_storage_account_key => \"*****\", :azure_container_name => \"b\", :azure_storage_account_name => \"a\"))"
+    )) == "AzureConfig(storage_account_name=\"a\", container_name=\"b\", storage_account_key=*****, opts=ClientOptions())"
 
     # sas token is obscured when printing
     @test repr(AzureConfig(;
         storage_account_name="a",
         container_name="b",
         storage_sas_token="c"
-    )) == "RustyObjectStore.AzureConfig(Config(:url => \"az://b/\", :azure_storage_sas_token => \"*****\", :azure_container_name => \"b\", :azure_storage_account_name => \"a\"))"
+    )) == "AzureConfig(storage_account_name=\"a\", container_name=\"b\", storage_sas_token=*****, opts=ClientOptions())"
 
     @test repr(AzureConfig(;
         storage_account_name="a",
         container_name="b",
         storage_account_key="c",
         host="d"
-    )) == "RustyObjectStore.AzureConfig(Config(:url => \"az://b/\", :azurite_host => \"d\", :azure_storage_account_key => \"*****\", :azure_container_name => \"b\", :azure_storage_account_name => \"a\"))"
+    )) == "AzureConfig(storage_account_name=\"a\", container_name=\"b\", storage_account_key=*****, host=\"d\", opts=ClientOptions())"
 
     # can only supply either access key or sas token
     try

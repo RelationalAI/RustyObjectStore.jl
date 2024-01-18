@@ -1,7 +1,7 @@
 @testitem "Basic BlobStorage exceptions" setup=[InitializeObjectStore] begin
     using CloudBase.CloudTest: Azurite
     import CloudBase
-    using RustyObjectStore: RustyObjectStore, get!, put, ClientOptions, AzureConfig, AwsConfig
+    using RustyObjectStore: RustyObjectStore, get_object!, put_object, ClientOptions, AzureConfig, AWSConfig
 
     # For interactive testing, use Azurite.run() instead of Azurite.with()
     # conf, p = Azurite.run(; debug=true, public=false); atexit(() -> kill(p))
@@ -23,11 +23,11 @@
             @assert sizeof(input) == 100
             @assert sizeof(buffer) < sizeof(input)
 
-            nbytes_written = put(codeunits(input), "test100B.csv", config)
+            nbytes_written = put_object(codeunits(input), "test100B.csv", config)
             @test nbytes_written == 100
 
             try
-                nbytes_read = get!(buffer, "test100B.csv", config)
+                nbytes_read = get_object!(buffer, "test100B.csv", config)
                 @test false # Should have thrown an error
             catch err
                 @test err isa RustyObjectStore.GetException
@@ -46,7 +46,7 @@
             )
 
             try
-                put(codeunits(input), "invalid_credentials.csv", bad_config)
+                put_object(codeunits(input), "invalid_credentials.csv", bad_config)
                 @test false # Should have thrown an error
             catch e
                 @test e isa RustyObjectStore.PutException
@@ -54,11 +54,11 @@
                 @test occursin("Authentication information is not given in the correct format", e.msg)
             end
 
-            nbytes_written = put(codeunits(input), "invalid_credentials.csv", config)
+            nbytes_written = put_object(codeunits(input), "invalid_credentials.csv", config)
             @assert nbytes_written == 100
 
             try
-                get!(buffer, "invalid_credentials.csv", bad_config)
+                get_object!(buffer, "invalid_credentials.csv", bad_config)
                 @test false # Should have thrown an error
             catch e
                 @test e isa RustyObjectStore.GetException
@@ -70,7 +70,7 @@
         @testset "Non-existing file" begin
             buffer = Vector{UInt8}(undef, 100)
             try
-                get!(buffer, "doesnt_exist.csv", config)
+                get_object!(buffer, "doesnt_exist.csv", config)
                 @test false # Should have thrown an error
             catch e
                 @test e isa RustyObjectStore.GetException
@@ -91,7 +91,7 @@
             buffer = Vector{UInt8}(undef, 100)
 
             try
-                put(codeunits("a,b,c"), "invalid_credentials2.csv", bad_config)
+                put_object(codeunits("a,b,c"), "invalid_credentials2.csv", bad_config)
                 @test false # Should have thrown an error
             catch e
                 @test e isa RustyObjectStore.PutException
@@ -99,11 +99,11 @@
                 @test occursin("The specified container does not exist", e.msg)
             end
 
-            nbytes_written = put(codeunits("a,b,c"), "invalid_credentials2.csv", config)
+            nbytes_written = put_object(codeunits("a,b,c"), "invalid_credentials2.csv", config)
             @assert nbytes_written == 5
 
             try
-                get!(buffer, "invalid_credentials2.csv", bad_config)
+                get_object!(buffer, "invalid_credentials2.csv", bad_config)
                 @test false # Should have thrown an error
             catch e
                 @test e isa RustyObjectStore.GetException
@@ -122,7 +122,7 @@
             buffer = Vector{UInt8}(undef, 100)
 
             try
-                put(codeunits("a,b,c"), "invalid_credentials3.csv", bad_config)
+                put_object(codeunits("a,b,c"), "invalid_credentials3.csv", bad_config)
                 @test false # Should have thrown an error
             catch e
                 @test e isa RustyObjectStore.PutException
@@ -130,11 +130,11 @@
                 @test occursin("The specified resource does not exist.", e.msg)
             end
 
-            nbytes_written = put(codeunits("a,b,c"), "invalid_credentials3.csv", config)
+            nbytes_written = put_object(codeunits("a,b,c"), "invalid_credentials3.csv", config)
             @assert nbytes_written == 5
 
             try
-                get!(buffer, "invalid_credentials3.csv", bad_config)
+                get_object!(buffer, "invalid_credentials3.csv", bad_config)
                 @test false # Should have thrown an error
             catch e
                 @test e isa RustyObjectStore.GetException
@@ -148,7 +148,7 @@
         buffer = Vector{UInt8}(undef, 100)
         # These test retry the connection error
         try
-            put(codeunits("a,b,c"), "still_doesnt_exist.csv", _stale_config)
+            put_object(codeunits("a,b,c"), "still_doesnt_exist.csv", _stale_config)
             @test false # Should have thrown an error
         catch e
             @test e isa RustyObjectStore.PutException
@@ -156,7 +156,7 @@
         end
 
         try
-            get!(buffer, "still_doesnt_exist.csv", _stale_config)
+            get_object!(buffer, "still_doesnt_exist.csv", _stale_config)
             @test false # Should have thrown an error
         catch e
             @test e isa RustyObjectStore.GetException
@@ -182,7 +182,7 @@ end # @testitem
 @testitem "BlobStorage retries" setup=[InitializeObjectStore] begin
     using CloudBase.CloudTest: Azurite
     import CloudBase
-    using RustyObjectStore: get!, put, AzureConfig, ClientOptions
+    using RustyObjectStore: get_object!, put_object, AzureConfig, ClientOptions
     import HTTP
     import Sockets
 
@@ -221,8 +221,8 @@ end # @testitem
         )
 
         try
-            method === :GET && get!(zeros(UInt8, 5), "blob", conf)
-            method === :PUT && put(codeunits("a,b,c"), "blob", conf)
+            method === :GET && get_object!(zeros(UInt8, 5), "blob", conf)
+            method === :PUT && put_object(codeunits("a,b,c"), "blob", conf)
             @test false # Should have thrown an error
         catch e
             method === :GET && @test e isa RustyObjectStore.GetException

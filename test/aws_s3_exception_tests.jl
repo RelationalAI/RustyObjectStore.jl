@@ -1,7 +1,7 @@
 @testitem "Basic S3 exceptions" setup=[InitializeObjectStore] begin
     using CloudBase.CloudTest: Minio
     import CloudBase
-    using RustyObjectStore: RustyObjectStore, get!, put, ClientOptions, AwsConfig
+    using RustyObjectStore: RustyObjectStore, get_object!, put_object, ClientOptions, AWSConfig
 
     # For interactive testing, use Minio.run() instead of Minio.with()
     # conf, p = Minio.run(; debug=true, public=false); atexit(() -> kill(p))
@@ -9,7 +9,7 @@
         _credentials, _container = conf
         base_url = _container.baseurl
         default_region = "us-east-1"
-        config = AwsConfig(;
+        config = AWSConfig(;
             region=default_region,
             bucket_name=_container.name,
             access_key_id=_credentials.access_key_id,
@@ -25,11 +25,11 @@
             @assert sizeof(input) == 100
             @assert sizeof(buffer) < sizeof(input)
 
-            nbytes_written = put(codeunits(input), "test100B.csv", config)
+            nbytes_written = put_object(codeunits(input), "test100B.csv", config)
             @test nbytes_written == 100
 
             try
-                nbytes_read = get!(buffer, "test100B.csv", config)
+                nbytes_read = get_object!(buffer, "test100B.csv", config)
                 @test false # Should have thrown an error
             catch err
                 @test err isa RustyObjectStore.GetException
@@ -40,7 +40,7 @@
         @testset "Malformed credentials" begin
             input = "1,2,3,4,5,6,7,8,9,1\n" ^ 5
             buffer = Vector{UInt8}(undef, 100)
-            bad_config = AwsConfig(;
+            bad_config = AWSConfig(;
                 region=default_region,
                 bucket_name=_container.name,
                 access_key_id=_credentials.access_key_id,
@@ -49,7 +49,7 @@
             )
 
             try
-                put(codeunits(input), "invalid_credentials.csv", bad_config)
+                put_object(codeunits(input), "invalid_credentials.csv", bad_config)
                 @test false # Should have thrown an error
             catch e
                 @test e isa RustyObjectStore.PutException
@@ -57,11 +57,11 @@
                 @test occursin("Check your key and signing method", e.msg)
             end
 
-            nbytes_written = put(codeunits(input), "invalid_credentials.csv", config)
+            nbytes_written = put_object(codeunits(input), "invalid_credentials.csv", config)
             @assert nbytes_written == 100
 
             try
-                get!(buffer, "invalid_credentials.csv", bad_config)
+                get_object!(buffer, "invalid_credentials.csv", bad_config)
                 @test false # Should have thrown an error
             catch e
                 @test e isa RustyObjectStore.GetException
@@ -73,7 +73,7 @@
         @testset "Non-existing file" begin
             buffer = Vector{UInt8}(undef, 100)
             try
-                get!(buffer, "doesnt_exist.csv", config)
+                get_object!(buffer, "doesnt_exist.csv", config)
                 @test false # Should have thrown an error
             catch e
                 @test e isa RustyObjectStore.GetException
@@ -85,7 +85,7 @@
         @testset "Non-existing container" begin
             non_existent_container_name = string(_container.name, "doesntexist")
             non_existent_base_url = replace(base_url, _container.name => non_existent_container_name)
-            bad_config = AwsConfig(;
+            bad_config = AWSConfig(;
                 region=default_region,
                 bucket_name=non_existent_container_name,
                 access_key_id=_credentials.access_key_id,
@@ -95,7 +95,7 @@
             buffer = Vector{UInt8}(undef, 100)
 
             try
-                put(codeunits("a,b,c"), "invalid_credentials2.csv", bad_config)
+                put_object(codeunits("a,b,c"), "invalid_credentials2.csv", bad_config)
                 @test false # Should have thrown an error
             catch e
                 @test e isa RustyObjectStore.PutException
@@ -103,11 +103,11 @@
                 @test occursin("The specified bucket does not exist", e.msg)
             end
 
-            nbytes_written = put(codeunits("a,b,c"), "invalid_credentials2.csv", config)
+            nbytes_written = put_object(codeunits("a,b,c"), "invalid_credentials2.csv", config)
             @assert nbytes_written == 5
 
             try
-                get!(buffer, "invalid_credentials2.csv", bad_config)
+                get_object!(buffer, "invalid_credentials2.csv", bad_config)
                 @test false # Should have thrown an error
             catch e
                 @test e isa RustyObjectStore.GetException
@@ -121,7 +121,7 @@
         buffer = Vector{UInt8}(undef, 100)
         # These test retry the connection error
         try
-            put(codeunits("a,b,c"), "still_doesnt_exist.csv", _stale_config)
+            put_object(codeunits("a,b,c"), "still_doesnt_exist.csv", _stale_config)
             @test false # Should have thrown an error
         catch e
             @test e isa RustyObjectStore.PutException
@@ -129,7 +129,7 @@
         end
 
         try
-            get!(buffer, "still_doesnt_exist.csv", _stale_config)
+            get_object!(buffer, "still_doesnt_exist.csv", _stale_config)
             @test false # Should have thrown an error
         catch e
             @test e isa RustyObjectStore.GetException
@@ -153,7 +153,7 @@ end # @testitem
 @testitem "AWS S3 retries" setup=[InitializeObjectStore] begin
     using CloudBase.CloudTest: Minio
     import CloudBase
-    using RustyObjectStore: get!, put, AwsConfig, ClientOptions
+    using RustyObjectStore: get_object!, put_object, AWSConfig, ClientOptions
     import HTTP
     import Sockets
 
@@ -181,7 +181,7 @@ end # @testitem
         end
 
         baseurl = "http://127.0.0.1:$port"
-        conf = AwsConfig(;
+        conf = AWSConfig(;
             region=region,
             bucket_name=container,
             access_key_id=dummy_access_key_id,
@@ -194,8 +194,8 @@ end # @testitem
         )
 
         try
-            method === :GET && get!(zeros(UInt8, 5), "blob", conf)
-            method === :PUT && put(codeunits("a,b,c"), "blob", conf)
+            method === :GET && get_object!(zeros(UInt8, 5), "blob", conf)
+            method === :PUT && put_object(codeunits("a,b,c"), "blob", conf)
             @test false # Should have thrown an error
         catch e
             method === :GET && @test e isa RustyObjectStore.GetException
