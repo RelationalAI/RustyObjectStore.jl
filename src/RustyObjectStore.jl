@@ -1,9 +1,6 @@
 module RustyObjectStore
 
 export init_object_store, get_object!, put_object, StaticConfig, ClientOptions, Config, AzureConfig, AWSConfig
-export ConfigBuilder, with_request_timeout_secs, with_connect_timeout_secs, with_max_retries, with_retry_timeout_secs,
-       azure, with_container_name, with_storage_account_name, with_storage_account_key, with_storage_sas_token, build,
-       aws, with_bucket_name, with_region, with_access_key, with_sts_token
 
 using Base.Libc.Libdl: dlext
 using Base: @kwdef, @lock
