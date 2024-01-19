@@ -67,7 +67,7 @@ function run_read_write_test_cases(read_config::AbstractConfig, write_config::Ab
         @test String(buffer[1:nbytes_read]) == input
     end
 
-    # Large files should eventually use multipart upload / download requests
+    # Large files should use multipart upload / download requests
     @testset "20MB file, 20MB buffer" begin
         input = "1,2,3,4,5,6,7,8,9,1\n" ^ 1_000_000
         buffer = Vector{UInt8}(undef, 20_000_000)
@@ -93,6 +93,20 @@ function run_read_write_test_cases(read_config::AbstractConfig, write_config::Ab
         @test nbytes_read == 20_000_000
         @test String(buffer[1:nbytes_read]) == input
     end
+
+    @testset "1MB file, 20MB buffer" begin
+        input = "1,2,3,4,5,6,7,8,9,1\n" ^ 50_000
+
+        nbytes_written = put_object(codeunits(input), "test100B.csv", write_config)
+        @test nbytes_written == 1_000_000
+
+        # Edge case for multpart download, file is less than threshold but buffer is greater
+        buffer = Vector{UInt8}(undef, 20_000_000)
+        nbytes_read = get_object!(buffer, "test100B.csv", read_config)
+        @test nbytes_read == 1_000_000
+        @test String(buffer[1:nbytes_read]) == input
+    end
+
 end
 end # @testsetup
 
