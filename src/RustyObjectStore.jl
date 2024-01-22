@@ -1,6 +1,7 @@
 module RustyObjectStore
 
 export init_object_store, get_object!, put_object, StaticConfig, ClientOptions, Config, AzureConfig, AWSConfig
+export ListEntry
 
 using Base.Libc.Libdl: dlext
 using Base: @kwdef, @lock
@@ -434,6 +435,9 @@ end
 struct PutException <: RequestException
     msg::String
 end
+struct ListException <: RequestException
+    msg::String
+end
 
 """
     get_object!(buffer, path, conf) -> Int
@@ -553,6 +557,285 @@ function put_object(buffer::AbstractVector{UInt8}, path::String, conf::AbstractC
 
         return Int(response.length)
     end
+end
+
+struct ListEntryFFI
+    location::Cstring
+    last_modified::Culonglong
+    size::Culonglong
+    e_tag::Cstring
+    version::Cstring
+end
+
+struct ListEntry
+    location::String
+    last_modified::Int
+    size::Int
+    e_tag::Option{String}
+    version::Option{String}
+end
+
+function convert_list_entry(entry::ListEntryFFI)
+    return ListEntry(
+        unsafe_string(entry.location),
+        convert(Int, entry.last_modified),
+        convert(Int, entry.size),
+        entry.e_tag != C_NULL ? unsafe_string(entry.e_tag) : nothing,
+        entry.version != C_NULL ? unsafe_string(entry.version) : nothing
+    )
+end
+
+struct ListResponseFFI
+    result::Cint
+    entries::Ptr{ListEntryFFI}
+    entry_count::Culonglong
+    error_message::Ptr{Cchar}
+
+    ListResponseFFI() = new(-1, C_NULL, 0, C_NULL)
+end
+
+"""
+    list_objects(prefix, conf) -> Vector{ListEntry}
+
+Send a list request to the object store.
+
+This buffers all entries in memory. For large (or unknown) object counts use `list_objects_stream`.
+
+# Arguments
+- `prefix::String`: Only objects with this prefix will be returned.
+- `conf::AbstractConfig`: The configuration to use for the request.
+  It includes credentials and other client options.
+
+# Returns
+- `entries::Vector{ListEntry}`: The array with metadata for each object in the prefix.
+  Resturns and empty array if no objects match.
+
+# Throws
+- `ListException`: If the request fails for any reason.
+"""
+function list_objects(prefix::String, conf::AbstractConfig)
+    response_ref = Ref(ListResponseFFI())
+    cond = Base.AsyncCondition()
+    cond_handle = cond.handle
+    config = into_config(conf)
+    while true
+        result = @ccall rust_lib.list(
+            prefix::Cstring,
+            config::Ref{Config},
+            response_ref::Ref{ListResponseFFI},
+            cond_handle::Ptr{Cvoid}
+        )::Cint
+
+        if result == 1
+            @error "failed to submit list, runtime not started"
+            return 1
+        elseif result == 2
+            # backoff
+            sleep(1.0)
+            continue
+        end
+
+        wait(cond)
+
+        response = response_ref[]
+        if response.result == 1
+            err = "failed to process list with error: $(unsafe_string(response.error_message))"
+            @ccall rust_lib.destroy_cstring(response.error_message::Ptr{Cchar})::Cint
+            # No need to destroy_list_response in case of errors
+            throw(ListException(err))
+        end
+
+        entries = if response.entry_count > 0
+            raw_entries = unsafe_wrap(Array, response.entries, response.entry_count)
+            vector = map(convert_list_entry, raw_entries)
+            @ccall rust_lib.destroy_list_entries(
+                response.entries::Ptr{ListEntryFFI},
+                response.entry_count::Culonglong
+            )::Cint
+            vector
+        else
+            Vector{ListEntry}[]
+        end
+
+        return entries
+    end
+end
+
+struct ListStreamResponseFFI
+    result::Cint
+    stream::Ptr{Nothing}
+    error_message::Ptr{Cchar}
+
+    ListStreamResponseFFI() = new(-1, C_NULL, C_NULL)
+end
+
+"""
+    ListStream
+
+
+Opaque stream of metadata list chunks (Vector{ListEntry}).
+
+Use `next_chunk!` repeatedly to fetch data. An empty chunk indicates end of stream.
+
+The stream stops if an error occours, any following calls to `next_chunk!` will repeat the same error.
+
+It is necessary to `finish!` the stream if it is not run to completion.
+
+"""
+mutable struct ListStream
+    ptr::Ptr{Nothing}
+    ended::Bool
+    error::Option{String}
+end
+
+"""
+    list_objects_stream(prefix, conf) -> ListStream
+
+Send a list request to the object store returning a stream of entry chunks.
+
+# Arguments
+- `prefix::String`: Only objects with this prefix will be returned.
+- `conf::AbstractConfig`: The configuration to use for the request.
+  It includes credentials and other client options.
+
+# Returns
+- `stream::ListStream`: The stream of object metadata chunks.
+
+# Throws
+- `ListException`: If the request fails for any reason.
+"""
+function list_objects_stream(prefix::String, conf::AbstractConfig)
+    response_ref = Ref(ListStreamResponseFFI())
+    cond = Base.AsyncCondition()
+    cond_handle = cond.handle
+    config = into_config(conf)
+    while true
+        result = @ccall rust_lib.list_stream(
+            prefix::Cstring,
+            config::Ref{Config},
+            response_ref::Ref{ListStreamResponseFFI},
+            cond_handle::Ptr{Cvoid}
+        )::Cint
+
+        if result == 1
+            @error "failed to submit list_stream, runtime not started"
+            return 1
+        elseif result == 2
+            # backoff
+            sleep(1.0)
+            continue
+        end
+
+        wait(cond)
+
+        response = response_ref[]
+        if response.result == 1
+            err = "failed to process list_stream with error: $(unsafe_string(response.error_message))"
+            @ccall rust_lib.destroy_cstring(response.error_message::Ptr{Cchar})::Cint
+            # No need to destroy_list_stream in case of errros here
+            throw(ListException(err))
+        end
+
+        return ListStream(response.stream, false, nothing)
+    end
+end
+
+"""
+    next_chunk!(stream) -> Vector{ListEntry}
+
+Fetch the next chunk from a ListStream.
+
+An empty chunk indicates end of stream.
+After an error any following calls will replay the error.
+
+# Arguments
+- `stream::ListStream`: The stream of object metadata list chunks.
+
+# Returns
+- `entries::Vector{ListEntry}`: The array with metadata for each object in the prefix.
+  Resturns and empty array if no objects match or the stream is over.
+
+# Throws
+- `ListException`: If the request fails for any reason.
+"""
+function next_chunk!(stream::ListStream)
+    if stream.ended
+        return nothing
+    end
+    if !isnothing(stream.error)
+        @error "stream stopped by prevoius error: $(stream.error)"
+        return nothing
+    end
+
+    response_ref = Ref(ListResponseFFI())
+    cond = Base.AsyncCondition()
+    cond_handle = cond.handle
+    while true
+        result = @ccall rust_lib.next_list_stream_chunk(
+            stream.ptr::Ptr{Cvoid},
+            response_ref::Ref{ListResponseFFI},
+            cond_handle::Ptr{Cvoid}
+        )::Cint
+
+        if result == 1
+            @error "failed to submit next_list_stream_chunk, runtime not started"
+            return nothing
+        elseif result == 2
+            # backoff
+            sleep(1.0)
+            continue
+        end
+
+        wait(cond)
+
+        response = response_ref[]
+        if response.result == 1
+            err = "failed to process next_list_stream_chunk with error: $(unsafe_string(response.error_message))"
+            @ccall rust_lib.destroy_cstring(response.error_message::Ptr{Cchar})::Cint
+            stream.error = err
+            @ccall rust_lib.destroy_list_stream(stream.ptr::Ptr{Nothing})::Cint
+            throw(ListException(err))
+        end
+
+        entries = if response.entry_count > 0
+            raw_entries = unsafe_wrap(Array, response.entries, response.entry_count)
+            vector = map(convert_list_entry, raw_entries)
+            @ccall rust_lib.destroy_list_entries(
+                response.entries::Ptr{ListEntryFFI},
+                response.entry_count::Culonglong
+            )::Cint
+            return vector
+        else
+            stream.ended = true
+            return nothing
+        end
+    end
+end
+
+
+"""
+    finish!(stream) -> Bool
+
+Finishes the stream reclaiming resources.
+
+This function is not thread-safe.
+
+# Arguments
+- `stream::ListStream`: The stream of object metadata list chunks.
+
+# Returns
+- `was_running::Bool`: Indicates if the stream was running when `finish!` was called.
+"""
+function finish!(stream::ListStream)
+    if stream.ended
+        return false
+    end
+    if !isnothing(stream.error)
+        return false
+    end
+    @ccall rust_lib.destroy_list_stream(stream.ptr::Ptr{Nothing})::Cint
+    stream.ended = true
+    return true
 end
 
 end # module

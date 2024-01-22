@@ -1,9 +1,9 @@
 @testsetup module ReadWriteCases
-using RustyObjectStore: get_object!, put_object, AbstractConfig
+using RustyObjectStore: get_object!, put_object, list_objects, list_objects_stream, next_chunk!, finish!, AbstractConfig
 
-using Test: @testset, @test
+using Test: @testset, @test, @test_skip
 
-export run_read_write_test_cases
+export run_read_write_test_cases, run_list_test_cases
 
 function run_read_write_test_cases(read_config::AbstractConfig, write_config::AbstractConfig = read_config)
     @testset "0B file, 0B buffer" begin
@@ -108,6 +108,103 @@ function run_read_write_test_cases(read_config::AbstractConfig, write_config::Ab
     end
 
 end
+
+function run_list_test_cases(config::AbstractConfig)
+    @testset "basic listing" begin
+        for i in range(10; step=10, length=5)
+            nbytes_written = put_object(codeunits(repeat('=', i)), "list/$(i).csv", config)
+            @test nbytes_written == i
+        end
+
+        entries = list_objects("list", config)
+        @test length(entries) == 5
+        @test map(x -> x.size, entries) == range(10; step=10, length=5)
+        @test map(x -> x.location, entries) == ["list/10.csv", "list/20.csv", "list/30.csv", "list/40.csv", "list/50.csv"]
+    end
+
+    @testset "basic prefix" begin
+        for i in range(10; step=10, length=5)
+            nbytes_written = put_object(codeunits(repeat('=', i)), "other/$(i).csv", config)
+            @test nbytes_written == i
+        end
+
+        for i in range(110; step=10, length=5)
+            nbytes_written = put_object(codeunits(repeat('=', i)), "other/prefix/$(i).csv", config)
+            @test nbytes_written == i
+        end
+
+        entries = list_objects("other", config)
+        @test length(entries) == 10
+
+        entries = list_objects("other/prefix", config)
+        @test length(entries) == 5
+        @test map(x -> x.size, entries) == range(110; step=10, length=5)
+        @test map(x -> x.location, entries) ==
+            ["other/prefix/110.csv", "other/prefix/120.csv", "other/prefix/130.csv", "other/prefix/140.csv", "other/prefix/150.csv"]
+
+        entries = list_objects("other/nonexistent", config)
+        @test length(entries) == 0
+
+        entries = list_objects("other/p", config)
+        @test length(entries) == 0
+    end
+
+    # FIXME this test does not work on Azure Blob Storage due to a workaround on the object_store library
+    # that skips empty blobs on the response. (see: https://github.com/apache/arrow-rs/blob/cf8084940d7b41d3f3d066a993981b20bb006e0c/object_store/src/azure/client.rs#L573)
+    @testset "list empty entries" begin
+        for i in range(10; step=10, length=3)
+            nbytes_written = put_object(codeunits(""), "list_empty/$(i).csv", config)
+            @test nbytes_written == 0
+        end
+
+        entries = list_objects("list_empty", config)
+        @test length(entries) == 3 skip=true
+        @test map(x -> x.size, entries) == [0, 0, 0] skip=true
+        @test map(x -> x.location, entries) == ["list_empty/10.csv", "list_empty/20.csv", "list_empty/30.csv"] skip=true
+    end
+
+    @testset "list stream" begin
+        data = range(10; step=10, length=1001)
+        for i in data
+            nbytes_written = put_object(codeunits(repeat('=', i)), "list/$(i).csv", config)
+            @test nbytes_written == i
+        end
+
+        stream = list_objects_stream("list", config)
+
+        entries = next_chunk!(stream)
+        @test length(entries) == 1000
+
+        one_entry = next_chunk!(stream)
+        @test length(one_entry) == 1
+
+        @test isnothing(next_chunk!(stream))
+
+        append!(entries, one_entry)
+
+        @test sort(map(x -> x.size, entries)) == data
+        @test sort(map(x -> x.location, entries)) == sort(map(x -> "list/$(x).csv", data))
+    end
+
+    @testset "list stream finish" begin
+        data = range(10; step=10, length=1001)
+        for i in data
+            nbytes_written = put_object(codeunits(repeat('=', i)), "list/$(i).csv", config)
+            @test nbytes_written == i
+        end
+
+        stream = list_objects_stream("list", config)
+
+        entries = next_chunk!(stream)
+        @test length(entries) == 1000
+
+        @test finish!(stream)
+
+        @test isnothing(next_chunk!(stream))
+
+        @test !finish!(stream)
+    end
+end
 end # @testsetup
 
 @testitem "Basic BlobStorage usage" setup=[InitializeObjectStore, ReadWriteCases] begin
@@ -128,6 +225,7 @@ Azurite.with(; debug=true, public=false) do conf
     )
 
     run_read_write_test_cases(config)
+    run_list_test_cases(config)
 end # Azurite.with
 
 end # @testitem
@@ -177,7 +275,7 @@ Minio.with(; debug=true, public=false) do conf
     )
 
     run_read_write_test_cases(config)
-
+    run_list_test_cases(config)
 end # Minio.with
 end # @testitem
 
