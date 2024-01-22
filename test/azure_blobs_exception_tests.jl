@@ -35,6 +35,26 @@
             end
         end
 
+        @testset "Insufficient output buffer size multipart" begin
+            input = "1,2,3,4,5,6,7,8,9,1\n" ^ 1_000_000
+            buffer = Vector{UInt8}(undef, 20_000_000)
+            @assert sizeof(input) == 20_000_000
+            @assert sizeof(buffer) == sizeof(input)
+
+            nbytes_written = put_object(codeunits(input), "test100B.csv", config)
+            @test nbytes_written == 20_000_000
+
+            try
+                # Buffer is over multipart threshold but too small for object
+                buffer = Vector{UInt8}(undef, 10_000_000)
+                nbytes_read = get_object!(buffer, "test100B.csv", config)
+                @test false # Should have thrown an error
+            catch err
+                @test err isa RustyObjectStore.GetException
+                @test err.msg == "failed to process get with error: Supplied buffer was too small"
+            end
+        end
+
         @testset "Malformed credentials" begin
             input = "1,2,3,4,5,6,7,8,9,1\n" ^ 5
             buffer = Vector{UInt8}(undef, 100)

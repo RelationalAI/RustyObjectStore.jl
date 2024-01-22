@@ -45,6 +45,13 @@ $TYPEDFIELDS
     cache_ttl_secs::Culonglong
     "The time-to-idle in seconds for entries in the client cache"
     cache_tti_secs::Culonglong
+    "Put requests with a size in bytes greater than this will use multipart operations"
+    multipart_put_threshold::Culonglong
+    "Get requests with a size in bytes greater than this will use multipart operations"
+    multipart_get_threshold::Culonglong
+    "The size in bytes for each part of multipart get operations"
+    multipart_get_part_size::Culonglong
+
 end
 
 function Base.show(io::IO, config::StaticConfig)
@@ -52,14 +59,20 @@ function Base.show(io::IO, config::StaticConfig)
     print(io, "n_threads=", Int(config.n_threads), ",")
     print(io, "cache_capacity=", Int(config.cache_capacity), ",")
     print(io, "cache_ttl_secs=", Int(config.cache_ttl_secs), ",")
-    print(io, "cache_tti_secs=", Int(config.cache_tti_secs), ")")
+    print(io, "cache_tti_secs=", Int(config.cache_tti_secs), ",")
+    print(io, "multipart_put_threshold=", Int(config.multipart_put_threshold), ",")
+    print(io, "multipart_get_threshold=", Int(config.multipart_get_threshold), ",")
+    print(io, "multipart_get_part_size=", Int(config.multipart_get_part_size), ")")
 end
 
 const DEFAULT_CONFIG = StaticConfig(
     n_threads=0,
     cache_capacity=20,
     cache_ttl_secs=30 * 60,
-    cache_tti_secs=5 * 60
+    cache_tti_secs=5 * 60,
+    multipart_put_threshold=10 * 1024 * 1024,
+    multipart_get_threshold=8 * 1024 * 1024,
+    multipart_get_part_size=8 * 1024 * 1024
 )
 
 const _OBJECT_STORE_STARTED = Ref(false)

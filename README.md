@@ -41,6 +41,39 @@ nbytes_read = get_object!(buffer, "path/to/example.csv", config)
 @assert String(buffer[1:nbytes_read]) == input
 ```
 
+One-time global configuration can be set using a StaticConfig object passed to init\_object\_store():
+```julia
+test_config = StaticConfig(
+    n_threads=0,
+    cache_capacity=20,
+    cache_ttl_secs=30 * 60,
+    cache_tti_secs=5 * 60,
+    multipart_put_threshold=8 * 1024 * 1024,
+    multipart_get_threshold=8 * 1024 * 1024,
+    multipart_get_part_size=8 * 1024 * 1024
+)
+init_object_store(test_config)
+```
+n\_threads is the number of rust executor threads to use. The default 0 means to use threads equal
+to the number of cores.
+
+cache\_capacity is the size of the LRU cache rust uses to cache connection objects. Here a connection
+means a unique combination of destination URL, credentials, and per-connection configuration such as
+timeouts; it does not mean an HTTP connection.
+
+cache\_ttl\_secs is the time-to-live in seconds for the rust connection cache.
+
+cache\_tti\_secs is the time in seconds that a connection can be idle before it is removed from the
+rust cache.
+
+multipart\_put\_threshold is the size in bytes for which any put request over this size will use a
+multipart upload. The put part size is determined by the rust object\_store implementation, which
+uses 10MB.
+
+multipart\_get\_threshold and multipart\_get\_part\_size configure automatic multipart gets. The part
+size can be greater than the threshold without breaking anything, but it may not make sense to do so.
+The default 8MB for these values was borrowed from CloudStore.jl.
+
 ## Design
 
 #### Packaging
