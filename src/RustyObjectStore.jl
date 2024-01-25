@@ -51,7 +51,8 @@ $TYPEDFIELDS
     multipart_get_threshold::Culonglong
     "The size in bytes for each part of multipart get operations"
     multipart_get_part_size::Culonglong
-
+    "The max number of allowed Rust request tasks"
+    concurrency_limit::Cuint
 end
 
 function Base.show(io::IO, config::StaticConfig)
@@ -72,7 +73,8 @@ const DEFAULT_CONFIG = StaticConfig(
     cache_tti_secs=5 * 60,
     multipart_put_threshold=10 * 1024 * 1024,
     multipart_get_threshold=8 * 1024 * 1024,
-    multipart_get_part_size=8 * 1024 * 1024
+    multipart_get_part_size=8 * 1024 * 1024,
+    concurrency_limit=512
 )
 
 const _OBJECT_STORE_STARTED = Ref(false)
