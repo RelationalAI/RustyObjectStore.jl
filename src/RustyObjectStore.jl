@@ -120,8 +120,8 @@ function init_object_store(
                 wait(cond)
                 try
                     on_rust_panic()
-                catch
-                    println("Custom panic hook failed")
+                catch e
+                    @error "Custom panic hook failed" exception=(e, catch_backtrace())
                 end
             end
         end)

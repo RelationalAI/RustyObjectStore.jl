@@ -91,6 +91,10 @@ In this way, the requests are asynchronous all the way up to Julia and the netwo
 For a GET request, Julia provides a buffer for the native library to write into.
 This requires Julia to know a suitable size before-hand and requires the native library to do an extra memory copy, but the upside is that Julia controls the lifetime of the memory.
 
+The library provides a way for Julia code to be notifed about a panic on a Rust thread through the `on_rust_panic` argument of `init_object_store`.
+The default behavior is to log the stack trace (if enabled through RUST_BACKTRACE) and exit the process.
+The general recommendation is to treat Rust panics as fatal because Julia tasks may hang due to not being notified.
+
 #### Threading Model
 
 Rust object_store uses the [tokio](https://docs.rs/tokio) async runtime.
