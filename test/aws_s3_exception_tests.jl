@@ -159,15 +159,96 @@ end # @testitem
 
     max_retries = 2
     retry_timeout_secs = 2
+    region = "us-east-1"
+    container = "mybucket"
+    dummy_access_key_id = "qUwJPLlmEtlCDXJ1OUzF"
+    dummy_secret_access_key = "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw=="
+
+
+    function test_tcp_error(method)
+        @assert method === :GET || method === :PUT
+        nrequests = Ref(0)
+
+        (port, tcp_server) = Sockets.listenany(8082)
+        @async begin
+            while true
+                sock = Sockets.accept(tcp_server)
+                _ = read(sock, 4)
+                close(sock)
+                nrequests[] += 1
+            end
+        end
+
+        baseurl = "http://127.0.0.1:$port"
+        conf = AWSConfig(;
+            region=region,
+            bucket_name=container,
+            access_key_id=dummy_access_key_id,
+            secret_access_key=dummy_secret_access_key,
+            host=baseurl,
+            opts=ClientOptions(;
+                max_retries=max_retries,
+                retry_timeout_secs=retry_timeout_secs
+            )
+        )
+
+        try
+            method === :GET && get_object!(zeros(UInt8, 5), "blob", conf)
+            method === :PUT && put_object(codeunits("a,b,c"), "blob", conf)
+            @test false # Should have thrown an error
+        catch e
+            method === :GET && @test e isa RustyObjectStore.GetException
+            method === :PUT && @test e isa RustyObjectStore.PutException
+            @test occursin("connection closed", e.msg)
+        finally
+            close(tcp_server)
+        end
+        return nrequests[]
+    end
+
+    function test_get_stream_error()
+        nrequests = Ref(0)
+
+        (port, tcp_server) = Sockets.listenany(8083)
+        http_server = HTTP.listen!(tcp_server) do http::HTTP.Stream
+            nrequests[] += 1
+            HTTP.setstatus(http, 200)
+            HTTP.setheader(http, "Content-Length" => "20")
+            HTTP.startwrite(http)
+            write(http, "not enough")
+            close(http.stream)
+        end
+
+        baseurl = "http://127.0.0.1:$port"
+        conf = AWSConfig(;
+            region=region,
+            bucket_name=container,
+            access_key_id=dummy_access_key_id,
+            secret_access_key=dummy_secret_access_key,
+            host=baseurl,
+            opts=ClientOptions(;
+                max_retries=max_retries,
+                retry_timeout_secs=retry_timeout_secs
+            )
+        )
+
+        try
+            get_object!(zeros(UInt8, 20), "blob", conf)
+            @test false # Should have thrown an error
+        catch e
+            @test e isa RustyObjectStore.GetException
+            @test occursin("end of file before message length reached", e.msg)
+        finally
+            close(http_server)
+        end
+        wait(http_server)
+        return nrequests[]
+    end
 
     function test_status(method, response_status, headers=nothing)
         @assert method === :GET || method === :PUT
         nrequests = Ref(0)
         response_body = "response body from the dummy server"
-        region = "us-east-1"
-        container = "mybucket"
-        dummy_access_key_id = "qUwJPLlmEtlCDXJ1OUzF"
-        dummy_secret_access_key = "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw=="
 
         (port, tcp_server) = Sockets.listenany(8081)
         http_server = HTTP.serve!(tcp_server) do request::HTTP.Request
@@ -324,6 +405,18 @@ end # @testitem
         nrequests = test_status(:GET, 504)
         @test nrequests == 1 + max_retries
         nrequests = test_status(:PUT, 504)
+        @test nrequests == 1 + max_retries
+    end
+
+    @testset "TCP Closed" begin
+        nrequests = test_tcp_error(:GET)
+        @test nrequests == 1 + max_retries
+        nrequests = test_tcp_error(:PUT)
+        @test nrequests == 1 + max_retries
+    end
+
+    @testset "Incomplete GET body" begin
+        nrequests = test_get_stream_error()
         @test nrequests == 1 + max_retries
     end
 end
