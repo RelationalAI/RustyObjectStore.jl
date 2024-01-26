@@ -50,7 +50,8 @@ test_config = StaticConfig(
     cache_tti_secs=5 * 60,
     multipart_put_threshold=8 * 1024 * 1024,
     multipart_get_threshold=8 * 1024 * 1024,
-    multipart_get_part_size=8 * 1024 * 1024
+    multipart_get_part_size=8 * 1024 * 1024,
+    concurrency_limit=512
 )
 init_object_store(test_config)
 ```
@@ -61,10 +62,11 @@ cache\_capacity is the size of the LRU cache rust uses to cache connection objec
 means a unique combination of destination URL, credentials, and per-connection configuration such as
 timeouts; it does not mean an HTTP connection.
 
-cache\_ttl\_secs is the time-to-live in seconds for the rust connection cache.
+cache\_ttl\_secs is the time-to-live in seconds for the rust connection cache. Using 0 will disable
+ttl eviction.
 
 cache\_tti\_secs is the time in seconds that a connection can be idle before it is removed from the
-rust cache.
+rust cache. Using 0 will disable tti eviction.
 
 multipart\_put\_threshold is the size in bytes for which any put request over this size will use a
 multipart upload. The put part size is determined by the rust object\_store implementation, which
@@ -73,6 +75,8 @@ uses 10MB.
 multipart\_get\_threshold and multipart\_get\_part\_size configure automatic multipart gets. The part
 size can be greater than the threshold without breaking anything, but it may not make sense to do so.
 The default 8MB for these values was borrowed from CloudStore.jl.
+
+concurrency\_limit is the max number of concurrent Rust tasks that will be allowed for requests.
 
 ## Design
 
