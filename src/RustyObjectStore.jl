@@ -85,9 +85,15 @@ struct InitException <: Exception
     return_code::Cint
 end
 
+function default_panic_hook()
+    println("Rust thread panicked, exiting the process")
+    exit(1)
+end
+
 """
     init_object_store()
     init_object_store(config::StaticConfig)
+    init_object_store(config::StaticConfig; on_rust_panic::Function)
 
 Initialise object store.
 
@@ -96,15 +102,33 @@ It must be called before sending a request e.g. with `get_object!` or `put_objec
 The runtime is only started once and cannot be re-initialised with a different config,
 subsequent `init_object_store` calls have no effect.
 
+An optional panic hook may be provided to react to panics on Rust's native threads.
+The default behavior is to log and exit the process.
+
 # Throws
 - `InitException`: if the runtime fails to start.
 """
-function init_object_store(config::StaticConfig=DEFAULT_CONFIG)
+function init_object_store(
+    config::StaticConfig=DEFAULT_CONFIG;
+    on_rust_panic::Function=default_panic_hook
+)
     @lock _INIT_LOCK begin
         if _OBJECT_STORE_STARTED[]
             return nothing
         end
-        res = @ccall rust_lib.start(config::StaticConfig)::Cint
+        cond = Base.AsyncCondition()
+        errormonitor(Threads.@spawn begin
+            while true
+                wait(cond)
+                try
+                    on_rust_panic()
+                catch e
+                    @error "Custom panic hook failed" exception=(e, catch_backtrace())
+                end
+            end
+        end)
+        panic_cond_handle = cond.handle
+        res = @ccall rust_lib.start(config::StaticConfig, panic_cond_handle::Ptr{Cvoid})::Cint
         if res != 0
             throw(InitException("Failed to initialise object store runtime.", res))
         end
