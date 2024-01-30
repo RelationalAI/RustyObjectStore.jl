@@ -6,7 +6,7 @@ RustyObjectStore.jl is a Julia package for getting and putting data in cloud obj
 It is built on top of the Rust [object_store crate](https://docs.rs/object_store/).
 It provides a minimal API and focusses on high throughput.
 
-_The package is under active development. Currently only Azure Blob Storage is supported._
+_The package is under active development._
 
 ## Usage
 
@@ -101,13 +101,18 @@ The general recommendation is to treat Rust panics as fatal because Julia tasks 
 
 #### Threading Model
 
-Rust object_store uses the [tokio](https://docs.rs/tokio) async runtime.
+Rust object_store uses the [tokio](https://docs.rs/tokio) async runtime. By default tokio sets up a worker thread pool with a number of threads equal to the number of cores.
+This is configurable using the StaticConfig n\_threads option described above.
 
-TODO
+The unit of scheduling for tokio is a task, and tasks are created by spawn calls. Tasks must be non-blocking and use async/await for I/O operations,
+which also serve as yield points for the cooperative concurrency between tasks. There is work stealing of tasks among the worker thread pools.
 
-#### Rust Configuration
+In object_store_ffi we use buffer_unordered to create a task for each request from Julia (up to a configurable concurrency limit) and allow them to be processed in any order.
+The concurrency limit is configurable using the StaticConfig concurrency\_limit option described above.
 
-TODO
+Julia will call into object_store_ffi providing a libuv condition variable and then wait on that variable.
+In the Rust code, the request from Julia is passed into a queue that is processed by a Rust spawned task. Once the request to cloud storage is complete,
+Rust signals the condition variable. In this way, the requests are asynchronous all the way up to Julia and the network processing is handled in the context of Rust thread pool.
 
 ## Developement
 
