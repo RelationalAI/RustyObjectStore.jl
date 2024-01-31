@@ -1,5 +1,6 @@
 @testsetup module ReadWriteCases
-using RustyObjectStore: get_object!, put_object, AbstractConfig
+import RustyObjectStore
+using RustyObjectStore: get_object!, put_object, delete_object, AbstractConfig
 
 using Test: @testset, @test
 
@@ -65,6 +66,26 @@ function run_read_write_test_cases(read_config::AbstractConfig, write_config::Ab
         nbytes_read = get_object!(buffer, "test100B.csv", read_config)
         @test nbytes_read == 1_000_000
         @test String(buffer[1:nbytes_read]) == input
+    end
+
+    @testset "delete_object" begin
+        input = "1,2,3,4,5,6,7,8,9,1\n" ^ 5
+        buffer = Vector{UInt8}(undef, 100)
+        @assert sizeof(input) == 100
+        @assert sizeof(buffer) == sizeof(input)
+
+        nbytes_written = put_object(codeunits(input), "test100B.csv", write_config)
+        @test nbytes_written == 100
+
+        delete_object("test100B.csv", write_config)
+
+        try
+            nbytes_read = get_object!(buffer, "test100B.csv", read_config)
+            @test false # should throw
+        catch e
+            @test e isa RustyObjectStore.GetException
+            @test occursin("not found", e.msg)
+        end
     end
 
     # Large files should use multipart upload / download requests

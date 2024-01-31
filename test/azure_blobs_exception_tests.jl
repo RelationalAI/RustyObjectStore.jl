@@ -99,6 +99,17 @@
             end
         end
 
+        @testset "Delete non-existing file" begin
+            try
+                delete_object("doesnt_exist.csv", config)
+                @test false # Should have thrown an error
+            catch e
+                @test e isa RustyObjectStore.DeleteException
+                @test occursin("404 Not Found", e.msg)
+                @test occursin("The specified blob does not exist", e.msg)
+            end
+        end
+
         @testset "Non-existing container" begin
             non_existent_container_name = string(_container.name, "doesntexist")
             non_existent_base_url = replace(base_url, _container.name => non_existent_container_name)

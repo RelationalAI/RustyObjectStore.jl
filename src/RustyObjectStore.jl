@@ -1,6 +1,7 @@
 module RustyObjectStore
 
-export init_object_store, get_object!, put_object, StaticConfig, ClientOptions, Config, AzureConfig, AWSConfig
+export init_object_store, get_object!, put_object, delete_object
+export StaticConfig, ClientOptions, Config, AzureConfig, AWSConfig
 
 using Base.Libc.Libdl: dlext
 using Base: @kwdef, @lock
@@ -434,6 +435,9 @@ end
 struct PutException <: RequestException
     msg::String
 end
+struct DeleteException <: RequestException
+    msg::String
+end
 
 """
     get_object!(buffer, path, conf) -> Int
@@ -552,6 +556,55 @@ function put_object(buffer::AbstractVector{UInt8}, path::String, conf::AbstractC
         end
 
         return Int(response.length)
+    end
+end
+
+"""
+    delete_object(path, conf)
+
+Send a delete request to the object store.
+
+# Arguments
+- `path::String`: The location of the object to delete.
+- `conf::AbstractConfig`: The configuration to use for the request.
+  It includes credentials and other client options.
+
+# Throws
+- `DeleteException`: If the request fails for any reason. Note that S3 will treat a delete request
+  to a non-existing object as a success, while Azure Blob will treat it as a 404 error.
+"""
+function delete_object(path::String, conf::AbstractConfig)
+    response_ref = Ref(Response())
+    cond = Base.AsyncCondition()
+    cond_handle = cond.handle
+    config = into_config(conf)
+    while true
+        result = @ccall rust_lib.delete(
+            path::Cstring,
+            config::Ref{Config},
+            response_ref::Ref{Response},
+            cond_handle::Ptr{Cvoid}
+        )::Cint
+
+        if result == 1
+            @error "failed to submit put, internal channel closed"
+            return 1
+        elseif result == 2
+            # backoff
+            sleep(1.0)
+            continue
+        end
+
+        wait(cond)
+
+        response = response_ref[]
+        if response.result == 1
+            err = "failed to process delete with error: $(unsafe_string(response.error_message))"
+            @ccall rust_lib.destroy_cstring(response.error_message::Ptr{Cchar})::Cint
+            throw(DeleteException(err))
+        end
+
+        return nothing
     end
 end
 
