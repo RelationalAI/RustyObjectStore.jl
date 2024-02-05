@@ -555,4 +555,212 @@ function put_object(buffer::AbstractVector{UInt8}, path::String, conf::AbstractC
     end
 end
 
+struct BufferFFI
+    data_ptr::Ptr{UInt8}
+    size::Culonglong
+    box_ptr::Ptr{Cvoid}
+end
+
+function convert_buffer(buffer::BufferFFI)
+    view = unsafe_wrap(Array, buffer.data_ptr, buffer.size)
+    vec = Vector{UInt8}(undef, buffer.size)
+    unsafe_copyto!(vec, 1, view, 1, buffer.size)
+    return vec
+end
+
+struct ChunkResponseFFI
+    result::Cint
+    buffers::Ptr{BufferFFI}
+    size::Culonglong
+    error_message::Ptr{Cchar}
+
+    ChunkResponseFFI() = new(-1, C_NULL, 0, C_NULL)
+end
+
+struct GetStreamResponseFFI
+    result::Cint
+    stream::Ptr{Nothing}
+    object_size::Culonglong
+    error_message::Ptr{Cchar}
+
+    GetStreamResponseFFI() = new(-1, C_NULL, 0, C_NULL)
+end
+
+# TODO use the IO stream interface
+
+"""
+    GetStream
+
+
+Opaque stream of data chunks (Vector{Vector{UInt8}}).
+
+Use `next_chunk!` repeatedly to fetch data. An empty chunk indicates end of stream.
+
+The stream stops if an error occours, any following calls to `next_chunk!` will repeat the same error.
+
+It is necessary to `finish!` the stream if it is not run to completion.
+
+"""
+mutable struct GetStream
+    ptr::Ptr{Nothing}
+    object_size::Int
+    ended::Bool
+    error::Option{String}
+end
+
+"""
+    get_object_stream(path, conf; size_hint) -> GetStream
+
+Send a list request to the object store returning a stream of entry chunks.
+
+# Arguments
+- `path::String`: The location of the data to fetch.
+- `conf::AbstractConfig`: The configuration to use for the request.
+  It includes credentials and other client options.
+
+# Keyword
+- `size_hint::Int`: (Optional) Expected size of the object (optimization for small objects).
+
+# Returns
+- `stream::GetStream`: The stream of object data chunks.
+
+# Throws
+- `GetException`: If the request fails for any reason.
+"""
+function get_object_stream(path::String, conf::AbstractConfig; size_hint::Int=0)
+    response_ref = Ref(GetStreamResponseFFI())
+    cond = Base.AsyncCondition()
+    cond_handle = cond.handle
+    config = into_config(conf)
+    hint = convert(UInt64, size_hint)
+    while true
+        result = @ccall rust_lib.get_stream(
+            path::Cstring,
+            hint::Culonglong,
+            config::Ref{Config},
+            response_ref::Ref{GetStreamResponseFFI},
+            cond_handle::Ptr{Cvoid}
+        )::Cint
+
+        if result == 1
+            @error "failed to submit get_stream, internal channel closed"
+            return 1
+        elseif result == 2
+            # backoff
+            sleep(1.0)
+            continue
+        end
+
+        wait(cond)
+
+        response = response_ref[]
+        if response.result == 1
+            err = "failed to process get_stream with error: $(unsafe_string(response.error_message))"
+            @ccall rust_lib.destroy_cstring(response.error_message::Ptr{Cchar})::Cint
+            # No need to destroy_get_stream in case of errors here
+            throw(GetException(err))
+        end
+
+        return GetStream(response.stream, convert(Int, response.object_size), false, nothing)
+    end
+end
+
+"""
+    next_chunk!(stream::GetStream) -> Vector{Vector{UInt8}}
+
+Fetch the next chunk from a GetStream.
+
+An empty chunk indicates end of stream.
+After an error any following calls will replay the error.
+
+# Arguments
+- `stream::GetStream`: The stream of object metadata list chunks.
+
+# Returns
+- `buffers::Vector{Vector{UInt8}}`: An array of buffers.
+Returns an empty array if the stream is over.
+
+# Throws
+- `GetException`: If the request fails for any reason.
+"""
+function next_chunk!(stream::GetStream)
+    if stream.ended
+        return nothing
+    end
+    if !isnothing(stream.error)
+        @error "stream stopped by prevoius error: $(stream.error)"
+        return nothing
+    end
+
+    response_ref = Ref(ChunkResponseFFI())
+    cond = Base.AsyncCondition()
+    cond_handle = cond.handle
+    while true
+        result = @ccall rust_lib.next_get_stream_chunk(
+            stream.ptr::Ptr{Cvoid},
+            response_ref::Ref{ChunkResponseFFI},
+            cond_handle::Ptr{Cvoid}
+        )::Cint
+
+        if result == 1
+            @error "failed to submit next_get_stream_chunk, runtime not started"
+            return nothing
+        elseif result == 2
+            # backoff
+            sleep(1.0)
+            continue
+        end
+
+        wait(cond)
+
+        response = response_ref[]
+        if response.result == 1
+            err = "failed to process next_get_stream_chunk with error: $(unsafe_string(response.error_message))"
+            @ccall rust_lib.destroy_cstring(response.error_message::Ptr{Cchar})::Cint
+            stream.error = err
+            @ccall rust_lib.destroy_get_stream(stream.ptr::Ptr{Nothing})::Cint
+            throw(GetException(err))
+        end
+
+        entries = if response.size > 0
+            raw_buffers = unsafe_wrap(Array, response.buffers, response.size)
+            vector = map(convert_buffer, raw_buffers)
+            @ccall rust_lib.destroy_chunk_buffers(
+                response.buffers::Ptr{BufferFFI},
+                response.size::Culonglong
+            )::Cint
+            return vector
+        else
+            stream.ended = true
+            return nothing
+        end
+    end
+end
+
+
+"""
+    finish!(stream::GetStream) -> Bool
+
+Finishes the stream reclaiming resources.
+
+This function is not thread-safe.
+
+# Arguments
+- `stream::GetStream`: The stream of object data chunks.
+
+# Returns
+- `was_running::Bool`: Indicates if the stream was running when `finish!` was called.
+"""
+function finish!(stream::GetStream)
+    if stream.ended
+        return false
+    end
+    if !isnothing(stream.error)
+        return false
+    end
+    @ccall rust_lib.destroy_get_stream(stream.ptr::Ptr{Nothing})::Cint
+    stream.ended = true
+    return true
+end
+
 end # module
