@@ -1,7 +1,7 @@
 module RustyObjectStore
 
 export init_object_store, get_object!, put_object, StaticConfig, ClientOptions, Config, AzureConfig, AWSConfig
-export ListEntry
+export ListEntry, list_objects, list_objects_stream, next_chunk!, finish!
 
 using Base.Libc.Libdl: dlext
 using Base: @kwdef, @lock
@@ -608,7 +608,7 @@ This buffers all entries in memory. For large (or unknown) object counts use `li
 
 # Returns
 - `entries::Vector{ListEntry}`: The array with metadata for each object in the prefix.
-  Resturns and empty array if no objects match.
+  Returns an empty array if no objects match.
 
 # Throws
 - `ListException`: If the request fails for any reason.
@@ -732,7 +732,7 @@ function list_objects_stream(prefix::String, conf::AbstractConfig)
         if response.result == 1
             err = "failed to process list_stream with error: $(unsafe_string(response.error_message))"
             @ccall rust_lib.destroy_cstring(response.error_message::Ptr{Cchar})::Cint
-            # No need to destroy_list_stream in case of errros here
+            # No need to destroy_list_stream in case of errors here
             throw(ListException(err))
         end
 
