@@ -20,10 +20,11 @@ object_store_ffi_jll = "0.4.2"
 
 [extras]
 CloudBase = "85eb1798-d7c4-4918-bb13-c944d38e27ed"
+CodecZlib = "944b1d66-785c-5afd-91f1-9de20f533193"
 HTTP = "cd3eb016-35fb-5094-929b-558a96fad6f3"
 ReTestItems = "817f1d60-ba6b-4fd5-9520-3cf149f6a823"
 Sockets = "6462fe0b-24de-5631-8697-dd941f90decc"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
-test = ["CloudBase", "HTTP", "ReTestItems", "Sockets", "Test"]
+test = ["CloudBase", "CodecZlib", "HTTP", "ReTestItems", "Sockets", "Test"]

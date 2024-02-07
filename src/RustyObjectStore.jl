@@ -555,26 +555,13 @@ function put_object(buffer::AbstractVector{UInt8}, path::String, conf::AbstractC
     end
 end
 
-struct BufferFFI
-    data_ptr::Ptr{UInt8}
-    size::Culonglong
-    box_ptr::Ptr{Cvoid}
-end
-
-function convert_buffer(buffer::BufferFFI)
-    view = unsafe_wrap(Array, buffer.data_ptr, buffer.size)
-    vec = Vector{UInt8}(undef, buffer.size)
-    unsafe_copyto!(vec, 1, view, 1, buffer.size)
-    return vec
-end
-
-struct ChunkResponseFFI
+struct ReadResponseFFI
     result::Cint
-    buffers::Ptr{BufferFFI}
-    size::Culonglong
+    length::Culonglong
+    eof::Cuchar
     error_message::Ptr{Cchar}
 
-    ChunkResponseFFI() = new(-1, C_NULL, 0, C_NULL)
+    ReadResponseFFI() = new(-1, 0, 0, C_NULL)
 end
 
 struct GetStreamResponseFFI
@@ -586,32 +573,71 @@ struct GetStreamResponseFFI
     GetStreamResponseFFI() = new(-1, C_NULL, 0, C_NULL)
 end
 
-# TODO use the IO stream interface
-
 """
     GetStream
 
 
-Opaque stream of data chunks (Vector{Vector{UInt8}}).
-
-Use `next_chunk!` repeatedly to fetch data. An empty chunk indicates end of stream.
-
-The stream stops if an error occours, any following calls to `next_chunk!` will repeat the same error.
+Opaque IO stream of object data.
 
 It is necessary to `finish!` the stream if it is not run to completion.
 
 """
-mutable struct GetStream
+mutable struct GetStream <: IO
     ptr::Ptr{Nothing}
     object_size::Int
+    bytes_read::Int
     ended::Bool
     error::Option{String}
+end
+
+Base.eof(io::GetStream) = io.bytes_read >= io.object_size
+bytesremaining(io::GetStream) = io.object_size - io.bytes_read
+function Base.bytesavailable(io::GetStream)
+    return min(bytesremaining(io), 1024)
+end
+function Base.close(io::GetStream)
+    finish!(io)
+    return nothing
+end
+
+Base.isopen(io::GetStream) = !io.ended && isnothing(io.error)
+Base.iswritable(io::GetStream) = false
+Base.filesize(io::GetStream) = io.object_size
+
+function Base.readbytes!(io::GetStream, dest::AbstractVector{UInt8}, n)
+    eof(io) && return 0
+    bytes_to_read = min(bytesremaining(io), Int(n))
+    bytes_to_read > length(dest) && resize!(dest, bytes_to_read)
+    bytes_read = GC.@preserve dest _unsafe_read(io, pointer(dest), bytes_to_read)
+    return bytes_read
+end
+
+function Base.unsafe_read(io::GetStream, p::Ptr{UInt8}, nb::UInt)
+    if eof(io)
+        nb > 0 && throw(EOFError())
+        return nothing
+    end
+    avail = bytesremaining(io)
+    _unsafe_read(io, p, min(avail, Int(nb)))
+    nb > avail && throw(EOFError())
+    return nothing
+end
+
+# TranscodingStreams.jl are calling this method when Base.bytesavailable is zero
+# to trigger buffer refill
+function Base.read(io::GetStream, ::Type{UInt8})
+    eof(io) && throw(EOFError())
+    buf = zeros(UInt8, 1)
+    n = _unsafe_read(io, pointer(buf), 1)
+    n < 1 && throw(EOFError())
+    @inbounds b = buf[1]
+    return b
 end
 
 """
     get_object_stream(path, conf; size_hint) -> GetStream
 
-Send a list request to the object store returning a stream of entry chunks.
+Send a get request to the object store returning a stream of object data.
 
 # Arguments
 - `path::String`: The location of the data to fetch.
@@ -661,29 +687,17 @@ function get_object_stream(path::String, conf::AbstractConfig; size_hint::Int=0)
             throw(GetException(err))
         end
 
-        return GetStream(response.stream, convert(Int, response.object_size), false, nothing)
+        return GetStream(
+            response.stream,
+            convert(Int, response.object_size),
+            0,
+            false,
+            nothing
+        )
     end
 end
 
-"""
-    next_chunk!(stream::GetStream) -> Vector{Vector{UInt8}}
-
-Fetch the next chunk from a GetStream.
-
-An empty chunk indicates end of stream.
-After an error any following calls will replay the error.
-
-# Arguments
-- `stream::GetStream`: The stream of object metadata list chunks.
-
-# Returns
-- `buffers::Vector{Vector{UInt8}}`: An array of buffers.
-Returns an empty array if the stream is over.
-
-# Throws
-- `GetException`: If the request fails for any reason.
-"""
-function next_chunk!(stream::GetStream)
+function _unsafe_read(stream::GetStream, dest::Ptr{UInt8}, bytes_to_read::Int)
     if stream.ended
         return nothing
     end
@@ -692,18 +706,21 @@ function next_chunk!(stream::GetStream)
         return nothing
     end
 
-    response_ref = Ref(ChunkResponseFFI())
+    response_ref = Ref(ReadResponseFFI())
     cond = Base.AsyncCondition()
     cond_handle = cond.handle
     while true
-        result = @ccall rust_lib.next_get_stream_chunk(
+        result = @ccall rust_lib.read_get_stream(
             stream.ptr::Ptr{Cvoid},
-            response_ref::Ref{ChunkResponseFFI},
+            dest::Ptr{UInt8},
+            bytes_to_read::Culonglong,
+            bytes_to_read::Culonglong,
+            response_ref::Ref{ReadResponseFFI},
             cond_handle::Ptr{Cvoid}
         )::Cint
 
         if result == 1
-            @error "failed to submit next_get_stream_chunk, runtime not started"
+            @error "failed to submit read_get_stream, runtime not started"
             return nothing
         elseif result == 2
             # backoff
@@ -715,21 +732,21 @@ function next_chunk!(stream::GetStream)
 
         response = response_ref[]
         if response.result == 1
-            err = "failed to process next_get_stream_chunk with error: $(unsafe_string(response.error_message))"
+            err = "failed to process read_get_stream with error: $(unsafe_string(response.error_message))"
             @ccall rust_lib.destroy_cstring(response.error_message::Ptr{Cchar})::Cint
             stream.error = err
             @ccall rust_lib.destroy_get_stream(stream.ptr::Ptr{Nothing})::Cint
             throw(GetException(err))
         end
 
-        entries = if response.size > 0
-            raw_buffers = unsafe_wrap(Array, response.buffers, response.size)
-            vector = map(convert_buffer, raw_buffers)
-            @ccall rust_lib.destroy_chunk_buffers(
-                response.buffers::Ptr{BufferFFI},
-                response.size::Culonglong
-            )::Cint
-            return vector
+        if response.length > 0
+            stream.bytes_read += response.length
+            if response.eof == 0
+                return convert(Int, response.length)
+            else
+                stream.ended = true
+                return convert(Int, response.length)
+            end
         else
             stream.ended = true
             return nothing
@@ -746,7 +763,7 @@ Finishes the stream reclaiming resources.
 This function is not thread-safe.
 
 # Arguments
-- `stream::GetStream`: The stream of object data chunks.
+- `stream::GetStream`: The stream of object data.
 
 # Returns
 - `was_running::Bool`: Indicates if the stream was running when `finish!` was called.
