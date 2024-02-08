@@ -1,6 +1,7 @@
 module RustyObjectStore
 
 export init_object_store, get_object!, put_object, StaticConfig, ClientOptions, Config, AzureConfig, AWSConfig
+export get_object_stream, GetStream, finish!
 
 using Base.Libc.Libdl: dlext
 using Base: @kwdef, @lock
