@@ -558,9 +558,6 @@ end # Minio.with
 end # @testitem
 
 @testitem "Basic AWS S3 usage (anonymous read enabled)" setup=[InitializeObjectStore, ReadWriteCases] begin
-# TODO: currently object_store defaults to Instance credentials when no other credentials are supplied
-# (see https://github.com/RelationalAI/RustyObjectStore.jl/issues/22)
-@test_skip begin
 using CloudBase.CloudTest: Minio
 using RustyObjectStore: AWSConfig, ClientOptions
 
@@ -585,5 +582,4 @@ Minio.with(; debug=true, public=true) do conf
 
     run_read_write_test_cases(config_no_creds, config)
 end # Minio.with
-end # @test_skip
 end # @testitem

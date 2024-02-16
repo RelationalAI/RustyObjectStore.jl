@@ -360,6 +360,7 @@ struct AWSConfig <: AbstractConfig
     access_key_id::Option{String}
     secret_access_key::Option{String}
     session_token::Option{String}
+    use_instance_metadata::Bool
     host::Option{String}
     opts::ClientOptions
     cached_config::Config
@@ -369,6 +370,7 @@ struct AWSConfig <: AbstractConfig
         access_key_id::Option{String} = nothing,
         secret_access_key::Option{String} = nothing,
         session_token::Option{String} = nothing,
+        use_instance_metadata::Bool = false,
         host::Option{String} = nothing,
         opts::ClientOptions = ClientOptions()
     )
@@ -393,6 +395,14 @@ struct AWSConfig <: AbstractConfig
             params["minio_host"] = host
         end
 
+        if !use_instance_metadata && isnothing(access_key_id)
+            params["aws_skip_signature"] = "true"
+        end
+
+        if use_instance_metadata && (!isnothing(access_key_id) || !isnothing(secret_access_key))
+            error("Credentials should not be provided when using instance metadata")
+        end
+
         cached_config = Config("s3://$(bucket_name)/", params)
         return new(
             region,
@@ -400,6 +410,7 @@ struct AWSConfig <: AbstractConfig
             access_key_id,
             secret_access_key,
             session_token,
+            use_instance_metadata,
             host,
             opts,
             cached_config
@@ -416,6 +427,7 @@ function Base.show(io::IO, conf::AWSConfig)
     @option_print(conf, access_key_id, true)
     @option_print(conf, secret_access_key, true)
     @option_print(conf, session_token, true)
+    conf.use_instance_metadata && print(io, "use_instance_metadata=", repr(conf.use_instance_metadata))
     @option_print(conf, host)
     print(io, ", ", "opts=", repr(conf.opts), ")")
 end
@@ -476,8 +488,7 @@ function get_object!(buffer::AbstractVector{UInt8}, path::String, conf::Abstract
         )::Cint
 
         if result == 1
-            @error "failed to submit get, internal channel closed"
-            return 1
+            throw(GetException("failed to submit get, internal channel closed"))
         elseif result == 2
             # backoff
             sleep(1.0)
@@ -535,8 +546,7 @@ function put_object(buffer::AbstractVector{UInt8}, path::String, conf::AbstractC
         )::Cint
 
         if result == 1
-            @error "failed to submit put, internal channel closed"
-            return 1
+            throw(PutException("failed to submit put, internal channel closed"))
         elseif result == 2
             # backoff
             sleep(1.0)
@@ -742,8 +752,7 @@ function get_object_stream(path::String, conf::AbstractConfig; size_hint::Int=0,
         )::Cint
 
         if result == 1
-            @error "failed to submit get_stream, internal channel closed"
-            return 1
+            throw(GetException("failed to submit get_stream, internal channel closed"))
         elseif result == 2
             # backoff
             sleep(1.0)
@@ -913,8 +922,7 @@ function put_object_stream(path::String, conf::AbstractConfig; compress::String=
         )::Cint
 
         if result == 1
-            @error "failed to submit put_stream, internal channel closed"
-            return 1
+            throw(PutException("failed to submit put_stream, internal channel closed"))
         elseif result == 2
             # backoff
             sleep(1.0)
