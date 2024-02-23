@@ -315,6 +315,19 @@ function run_stream_test_cases(config::AbstractConfig)
         objdata = read(rs)
         @test objdata == codeunits(multicsv)
     end
+    @testset "WriteStream write empty" begin
+        multicsv = ""; # 0 B
+
+        ws = put_object_stream("test.csv", config)
+
+        write(ws, codeunits(multicsv))
+
+        close(ws)
+
+        rs = get_object_stream("test.csv", config)
+        objdata = read(rs)
+        @test objdata == codeunits(multicsv)
+    end
     @testset "WriteStream write small bytes and compress" begin
         multicsv = "1,2,3,4,5,6,7,8,9,1\n"^100; # 2000 B
 

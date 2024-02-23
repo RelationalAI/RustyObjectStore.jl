@@ -1,6 +1,7 @@
 module RustyObjectStore
 
 export init_object_store, get_object!, put_object, StaticConfig, ClientOptions, Config, AzureConfig, AWSConfig
+export status_code, is_connection, is_timeout, is_early_eof, is_unknown
 export get_object_stream, ReadStream, finish!
 
 using Base.Libc.Libdl: dlext
@@ -440,12 +441,95 @@ struct Response
     Response() = new(-1, 0, C_NULL)
 end
 
+abstract type ErrorReason end
+
+struct ConnectionError <: ErrorReason end
+struct StatusError <: ErrorReason
+    code::Int
+end
+struct EarlyEOF <: ErrorReason end
+struct TimeoutError <: ErrorReason end
+struct UnknownError <: ErrorReason end
+
 abstract type RequestException <: Exception end
 struct GetException <: RequestException
     msg::String
+    reason::ErrorReason
+
+    GetException(msg) = new(msg, rust_message_to_reason(msg))
 end
 struct PutException <: RequestException
     msg::String
+    reason::ErrorReason
+
+    PutException(msg) = new(msg, rust_message_to_reason(msg))
+end
+
+function reason(e::GetException)
+    return e.reason::ErrorReason
+end
+
+function reason(e::PutException)
+    return e.reason::ErrorReason
+end
+
+function status_code(e::RequestException)
+    return reason(e) isa StatusError ? reason(e).code : nothing
+end
+
+function is_connection(e::RequestException)
+    return reason(e) isa ConnectionError
+end
+
+function is_timeout(e::RequestException)
+    return reason(e) isa TimeoutError
+end
+
+function is_early_eof(e::RequestException)
+    return reason(e) isa EarlyEOF
+end
+
+function is_unknown(e::RequestException)
+    return reason(e) isa UnknownError
+end
+
+
+function rust_message_to_reason(msg::AbstractString)
+    if contains(msg, "tcp connect error: deadline has elapsed") ||
+        contains(msg, "tcp connect error: Connection refused")
+        return ConnectionError()
+    elseif contains(msg, "Client error with status")
+        m = match(r"Client error with status (\d+) ", msg)
+        if !isnothing(m)
+            code = tryparse(Int, m.captures[1])
+            if !isnothing(code)
+                return StatusError(code)
+            else
+                return UnknownError()
+            end
+        else
+            return UnknownError()
+        end
+    elseif contains(msg, "HTTP status server error")
+        m = match(r"HTTP status server error \((\d+) ", msg)
+        if !isnothing(m)
+            code = tryparse(Int, m.captures[1])
+            if !isnothing(code)
+                return StatusError(code)
+            else
+                return UnknownError()
+            end
+        else
+            return UnknownError()
+        end
+    elseif contains(msg, "connection closed before message completed") ||
+        contains(msg, "end of file before message length reached")
+        return EarlyEOF()
+    elseif contains(msg, "timed out")
+        return TimeoutError()
+    else
+        return UnknownError()
+    end
 end
 
 """
