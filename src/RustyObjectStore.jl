@@ -312,6 +312,11 @@ struct AzureConfig <: AbstractConfig
 
         if !isnothing(host)
             params["azurite_host"] = host
+            params["azure_disable_emulator_key"] = "true"
+        end
+
+        if isnothing(storage_account_key) && isnothing(storage_sas_token)
+            params["azure_skip_signature"] = "true"
         end
 
         cached_config = Config("az://$(container_name)/", params)
@@ -533,7 +538,7 @@ function rust_message_to_reason(msg::AbstractString)
     elseif contains(msg, "timed out")
         return TimeoutError()
     elseif contains(msg, "Unable to convert URL") ||
-        contains(msgm, "Unable to recognise URL")
+        contains(msg, "Unable to recognise URL")
         return ParseURLError()
     else
         return UnknownError()
