@@ -506,7 +506,8 @@ end
 
 function rust_message_to_reason(msg::AbstractString)
     if contains(msg, "tcp connect error: deadline has elapsed") ||
-        contains(msg, "tcp connect error: Connection refused")
+        contains(msg, "tcp connect error: Connection refused") ||
+        contains(msg, "error trying to connect: dns error")
         return ConnectionError()
     elseif contains(msg, "Client error with status")
         m = match(r"Client error with status (\d+) ", msg)
