@@ -454,7 +454,7 @@ struct StatusError <: ErrorReason
 end
 struct EarlyEOF <: ErrorReason end
 struct TimeoutError <: ErrorReason end
-struct URLError <: ErrorReason end
+struct ParseURLError <: ErrorReason end
 struct UnknownError <: ErrorReason end
 
 abstract type RequestException <: Exception end
