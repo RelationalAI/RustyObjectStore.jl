@@ -1,7 +1,7 @@
 module RustyObjectStore
 
 export init_object_store, get_object!, put_object, StaticConfig, ClientOptions, Config, AzureConfig, AWSConfig
-export status_code, is_connection, is_timeout, is_early_eof, is_unknown
+export status_code, is_connection, is_timeout, is_early_eof, is_unknown, is_parse_url
 export get_object_stream, ReadStream, finish!
 
 using Base.Libc.Libdl: dlext
@@ -449,6 +449,7 @@ struct StatusError <: ErrorReason
 end
 struct EarlyEOF <: ErrorReason end
 struct TimeoutError <: ErrorReason end
+struct URLError <: ErrorReason end
 struct UnknownError <: ErrorReason end
 
 abstract type RequestException <: Exception end
@@ -489,6 +490,10 @@ function is_early_eof(e::RequestException)
     return reason(e) isa EarlyEOF
 end
 
+function is_parse_url(e::RequestException)
+    return reason(e) isa ParseURLError
+end
+
 function is_unknown(e::RequestException)
     return reason(e) isa UnknownError
 end
@@ -527,6 +532,9 @@ function rust_message_to_reason(msg::AbstractString)
         return EarlyEOF()
     elseif contains(msg, "timed out")
         return TimeoutError()
+    elseif contains(msg, "Unable to convert URL") ||
+        contains(msgm, "Unable to recognise URL")
+        return ParseURLError()
     else
         return UnknownError()
     end
