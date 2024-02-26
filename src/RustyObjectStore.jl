@@ -312,7 +312,6 @@ struct AzureConfig <: AbstractConfig
 
         if !isnothing(host)
             params["azurite_host"] = host
-            params["azure_disable_emulator_key"] = "true"
         end
 
         if isnothing(storage_account_key) && isnothing(storage_sas_token)
