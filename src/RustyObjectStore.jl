@@ -628,17 +628,13 @@ function get_object!(buffer::AbstractVector{UInt8}, path::String, conf::Abstract
             cond_handle::Ptr{Cvoid}
         )::Cint
 
-        if result == 1
-            response = response_ref[]
-            @throw_on_error(response, "get", GetException)
-            throw(GetException("failed to submit get, internal channel closed"))
-        elseif result == 2
+        wait(cond)
+
+        if result == 2
             # backoff
             sleep(1.0)
             continue
         end
-
-        wait(cond)
 
         response = response_ref[]
         @throw_on_error(response, "get", GetException)
@@ -684,17 +680,13 @@ function put_object(buffer::AbstractVector{UInt8}, path::String, conf::AbstractC
             cond_handle::Ptr{Cvoid}
         )::Cint
 
-        if result == 1
-            response = response_ref[]
-            @throw_on_error(response, "put", PutException)
-            throw(PutException("failed to submit put, internal channel closed"))
-        elseif result == 2
+        wait(cond)
+
+        if result == 2
             # backoff
             sleep(1.0)
             continue
         end
-
-        wait(cond)
 
         response = response_ref[]
         @throw_on_error(response, "put", PutException)
@@ -727,7 +719,7 @@ end
 
 Opaque IO stream of object data.
 
-It is necessary to `finish!` the stream if it is not run to completion.
+It is necessary to `Base.close` the stream if it is not run to completion.
 
 """
 mutable struct ReadStream <: IO
@@ -770,6 +762,7 @@ function Base.eof(io::ReadStream)
 
         if eof
             io.ended = true
+            @ccall rust_lib.destroy_read_stream(io.ptr::Ptr{Nothing})::Cint
         end
 
         return eof
@@ -888,18 +881,13 @@ function get_object_stream(path::String, conf::AbstractConfig; size_hint::Int=0,
             cond_handle::Ptr{Cvoid}
         )::Cint
 
-        if result == 1
-            response = response_ref[]
-            # No need to destroy_read_stream in case of errors here
-            @throw_on_error(response, "get_stream", GetException)
-            throw(GetException("failed to submit get_stream, internal channel closed"))
-        elseif result == 2
+        wait(cond)
+
+        if result == 2
             # backoff
             sleep(1.0)
             continue
         end
-
-        wait(cond)
 
         response = response_ref[]
         # No need to destroy_read_stream in case of errors here
@@ -936,19 +924,6 @@ function _unsafe_read(stream::ReadStream, dest::Ptr{UInt8}, bytes_to_read::Int)
         cond_handle::Ptr{Cvoid}
     )::Cint
 
-    if result == 1
-        response = response_ref[]
-        try
-            @throw_on_error(response, "read_from_stream", GetException)
-        catch e
-            stream.error = e.msg
-            @ccall rust_lib.destroy_read_stream(stream.ptr::Ptr{Nothing})::Cint
-            rethrow()
-        end
-        @error "failed to submit read_from_stream, runtime not started"
-        return nothing
-    end
-
     wait(cond)
 
     response = response_ref[]
@@ -966,10 +941,12 @@ function _unsafe_read(stream::ReadStream, dest::Ptr{UInt8}, bytes_to_read::Int)
             return convert(Int, response.length)
         else
             stream.ended = true
+            @ccall rust_lib.destroy_read_stream(stream.ptr::Ptr{Nothing})::Cint
             return convert(Int, response.length)
         end
     else
         stream.ended = true
+        @ccall rust_lib.destroy_read_stream(stream.ptr::Ptr{Nothing})::Cint
         return nothing
     end
 end
@@ -995,8 +972,8 @@ function finish!(stream::ReadStream)
     if !isnothing(stream.error)
         return false
     end
-    @ccall rust_lib.destroy_read_stream(stream.ptr::Ptr{Nothing})::Cint
     stream.ended = true
+    @ccall rust_lib.destroy_read_stream(stream.ptr::Ptr{Nothing})::Cint
     return true
 end
 
@@ -1065,18 +1042,13 @@ function put_object_stream(path::String, conf::AbstractConfig; compress::String=
             cond_handle::Ptr{Cvoid}
         )::Cint
 
-        if result == 1
-            response = response_ref[]
-            # No need to destroy_write_stream in case of errors here
-            @throw_on_error(response, "put_stream", PutException)
-            throw(PutException("failed to submit put_stream, internal channel closed"))
-        elseif result == 2
+        wait(cond)
+
+        if result == 2
             # backoff
             sleep(1.0)
             continue
         end
-
-        wait(cond)
 
         response = response_ref[]
         # No need to destroy_write_stream in case of errors here
@@ -1147,19 +1119,6 @@ function shutdown!(stream::WriteStream)
         cond_handle::Ptr{Cvoid}
     )::Cint
 
-    if result == 1
-        response = response_ref[]
-        try
-            @throw_on_error(response, "shutdown_write_stream", PutException)
-        catch e
-            stream.error = e.msg
-            @ccall rust_lib.destroy_write_stream(stream.ptr::Ptr{Nothing})::Cint
-            stream.destroyed = true
-            rethrow()
-        end
-        throw(PutException("failed to submit shutdown_write_stream, runtime not started"))
-    end
-
     wait(cond)
 
     response = response_ref[]
@@ -1224,19 +1183,6 @@ function _unsafe_write(stream::WriteStream, input::Ptr{UInt8}, nbytes::Int; flus
         response_ref::Ref{WriteResponseFFI},
         cond_handle::Ptr{Cvoid}
     )::Cint
-
-    if result == 1
-        response = response_ref[]
-        try
-            @throw_on_error(response, "write_to_stream", PutException)
-        catch e
-            stream.error = e.msg
-            @ccall rust_lib.destroy_write_stream(stream.ptr::Ptr{Nothing})::Cint
-            stream.destroyed = true
-            rethrow()
-        end
-        throw(PutException("failed to submit write_to_stream, runtime not started"))
-    end
 
     wait(cond)
 
