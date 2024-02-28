@@ -82,6 +82,12 @@
             end
         end
 
+        @testset "Delete non-existing file" begin
+            # S3 semantics is to return success on deleting a non-existing file, so we expect this
+            # to succeed
+            delete_object("doesnt_exist.csv", config)
+        end
+
         @testset "Non-existing container" begin
             non_existent_container_name = string(_container.name, "doesntexist")
             non_existent_base_url = replace(base_url, _container.name => non_existent_container_name)

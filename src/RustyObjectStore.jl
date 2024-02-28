@@ -1,8 +1,10 @@
 module RustyObjectStore
 
-export init_object_store, get_object!, put_object, StaticConfig, ClientOptions, Config, AzureConfig, AWSConfig
+export init_object_store, get_object!, put_object, delete_object
+export StaticConfig, ClientOptions, Config, AzureConfig, AWSConfig
 export status_code, is_connection, is_timeout, is_early_eof, is_unknown, is_parse_url
 export get_object_stream, ReadStream, finish!
+export put_object_stream, WriteStream, cancel!, shutdown!
 
 using Base.Libc.Libdl: dlext
 using Base: @kwdef, @lock
@@ -513,12 +515,23 @@ struct PutException <: RequestException
 
     PutException(msg) = new(msg, rust_message_to_reason(msg))
 end
+struct DeleteException <: RequestException
+    msg::String
+    reason::ErrorReason
+
+    DeleteException(msg) = new(msg, rust_message_to_reason(msg))
+end
+
 
 function reason(e::GetException)
     return e.reason::ErrorReason
 end
 
 function reason(e::PutException)
+    return e.reason::ErrorReason
+end
+
+function reason(e::DeleteException)
     return e.reason::ErrorReason
 end
 
@@ -692,6 +705,48 @@ function put_object(buffer::AbstractVector{UInt8}, path::String, conf::AbstractC
         @throw_on_error(response, "put", PutException)
 
         return Int(response.length)
+    end
+end
+
+"""
+    delete_object(path, conf)
+
+Send a delete request to the object store.
+
+# Arguments
+- `path::String`: The location of the object to delete.
+- `conf::AbstractConfig`: The configuration to use for the request.
+  It includes credentials and other client options.
+
+# Throws
+- `DeleteException`: If the request fails for any reason. Note that S3 will treat a delete request
+  to a non-existing object as a success, while Azure Blob will treat it as a 404 error.
+"""
+function delete_object(path::String, conf::AbstractConfig)
+    response_ref = Ref(Response())
+    cond = Base.AsyncCondition()
+    cond_handle = cond.handle
+    config = into_config(conf)
+    while true
+        result = @ccall rust_lib.delete(
+            path::Cstring,
+            config::Ref{Config},
+            response_ref::Ref{Response},
+            cond_handle::Ptr{Cvoid}
+        )::Cint
+
+        wait(cond)
+
+        if result == 2
+            # backoff
+            sleep(1.0)
+            continue
+        end
+
+        response = response_ref[]
+        @throw_on_error(response, "delete_object", DeleteException)
+
+        return nothing
     end
 end
 
@@ -950,7 +1005,6 @@ function _unsafe_read(stream::ReadStream, dest::Ptr{UInt8}, bytes_to_read::Int)
         return nothing
     end
 end
-
 
 """
     finish!(stream::ReadStream) -> Bool
