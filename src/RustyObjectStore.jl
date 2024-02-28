@@ -531,6 +531,10 @@ function reason(e::PutException)
     return e.reason::ErrorReason
 end
 
+function reason(e::DeleteException)
+    return e.reason::ErrorReason
+end
+
 function status_code(e::RequestException)
     return reason(e) isa StatusError ? reason(e).code : nothing
 end
