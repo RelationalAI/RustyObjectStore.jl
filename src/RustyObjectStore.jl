@@ -4,6 +4,7 @@ export init_object_store, get_object!, put_object, delete_object
 export StaticConfig, ClientOptions, Config, AzureConfig, AWSConfig
 export status_code, is_connection, is_timeout, is_early_eof, is_unknown, is_parse_url
 export get_object_stream, ReadStream, finish!
+export put_object_stream, WriteStream, cancel!, shutdown!
 
 using Base.Libc.Libdl: dlext
 using Base: @kwdef, @lock
@@ -514,6 +515,13 @@ struct PutException <: RequestException
 
     PutException(msg) = new(msg, rust_message_to_reason(msg))
 end
+struct DeleteException <: RequestException
+    msg::String
+    reason::ErrorReason
+
+    DeleteException(msg) = new(msg, rust_message_to_reason(msg))
+end
+
 
 function reason(e::GetException)
     return e.reason::ErrorReason
@@ -588,9 +596,6 @@ function rust_message_to_reason(msg::AbstractString)
     else
         return UnknownError()
     end
-end
-struct DeleteException <: RequestException
-    msg::String
 end
 
 """
