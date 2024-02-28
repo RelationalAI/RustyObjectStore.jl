@@ -1,10 +1,397 @@
 @testsetup module ReadWriteCases
-import RustyObjectStore
-using RustyObjectStore: get_object!, put_object, delete_object, AbstractConfig
+using RustyObjectStore: get_object!, put_object, get_object_stream, put_object_stream,
+    AbstractConfig, delete_object
+using CodecZlib
+using RustyObjectStore
 
-using Test: @testset, @test
+using Test: @testset, @test, @test_throws
 
-export run_read_write_test_cases
+export run_read_write_test_cases, run_stream_test_cases
+
+function run_stream_test_cases(config::AbstractConfig)
+    # ReadStream
+    @testset "ReadStream small readbytes!" begin
+        multicsv = "1,2,3,4,5,6,7,8,9,1\n"^10; # 200 B
+        nbytes_written = put_object(codeunits(multicsv), "test.csv", config)
+        @test nbytes_written == 200
+
+        buffer = Vector{UInt8}(undef, 200)
+        nbytes_read = get_object!(buffer, "test.csv", config)
+        @test nbytes_read == 200
+
+        N = 19
+        buf = Vector{UInt8}(undef, N)
+        copyto!(buf, 1, buffer, 1, N)
+        @test buf == view(codeunits(multicsv), 1:N)
+
+        ioobj = get_object_stream("test.csv", config)
+        i = 1
+        while i < sizeof(multicsv)
+            nb = i + N > length(multicsv) ? length(multicsv) - i : N
+            readbytes!(ioobj, buf, N)
+            @test view(buf, 1:nb) == view(codeunits(multicsv), i:i+nb-1)
+            i += N
+        end
+
+        close(ioobj)
+    end
+    @testset "ReadStream large readbytes!" begin
+        multicsv = "1,2,3,4,5,6,7,8,9,1\n"^1000000; # 20 MB
+        nbytes_written = put_object(codeunits(multicsv), "test.csv", config)
+        @test nbytes_written == 20 * 1000 * 1000
+
+        buffer = Vector{UInt8}(undef, 20 * 1000 * 1000)
+        nbytes_read = get_object!(buffer, "test.csv", config)
+        @test nbytes_read == 20 * 1000 * 1000
+
+        N = 1024*1024
+        buf = Vector{UInt8}(undef, N)
+        copyto!(buf, 1, buffer, 1, N)
+        @test buf == view(codeunits(multicsv), 1:N)
+
+        ioobj = get_object_stream("test.csv", config)
+        i = 1
+        while i < sizeof(multicsv)
+            nb = i + N > length(multicsv) ? length(multicsv) - i : N
+            readbytes!(ioobj, buf, N)
+            @test view(buf, 1:nb) == view(codeunits(multicsv), i:i+nb-1)
+            i += N
+        end
+
+        close(ioobj)
+    end
+    @testset "ReadStream small unsafe_read" begin
+        multicsv = "1,2,3,4,5,6,7,8,9,1\n"^10; # 200 B
+        nbytes_written = put_object(codeunits(multicsv), "test.csv", config)
+        @test nbytes_written == 200
+
+        buffer = Vector{UInt8}(undef, 200)
+        nbytes_read = get_object!(buffer, "test.csv", config)
+        @test nbytes_read == 200
+
+        N = 19
+        buf = Vector{UInt8}(undef, N)
+        copyto!(buf, 1, buffer, 1, N)
+        @test buf == view(codeunits(multicsv), 1:N)
+
+        ioobj = get_object_stream("test.csv", config)
+        i = 1
+        while i < sizeof(multicsv)
+            nb = i + N > length(multicsv) ? length(multicsv) - i : N
+            unsafe_read(ioobj, pointer(buf), nb)
+            @test view(buf, 1:nb) == view(codeunits(multicsv), i:i+nb-1)
+            i += N
+        end
+
+        close(ioobj)
+    end
+    @testset "ReadStream large unsafe_read" begin
+        multicsv = "1,2,3,4,5,6,7,8,9,1\n"^1000000; # 20 MB
+        nbytes_written = put_object(codeunits(multicsv), "test.csv", config)
+        @test nbytes_written == 20 * 1000 * 1000
+
+        buffer = Vector{UInt8}(undef, 20 * 1000 * 1000)
+        nbytes_read = get_object!(buffer, "test.csv", config)
+        @test nbytes_read == 20 * 1000 * 1000
+
+        N = 1024*1024
+        buf = Vector{UInt8}(undef, N)
+        copyto!(buf, 1, buffer, 1, N)
+        @test buf == view(codeunits(multicsv), 1:N)
+
+        ioobj = get_object_stream("test.csv", config)
+        i = 1
+        while i < sizeof(multicsv)
+            nb = i + N > length(multicsv) ? length(multicsv) - i : N
+            unsafe_read(ioobj, pointer(buf), nb)
+            @test view(buf, 1:nb) == view(codeunits(multicsv), i:i+nb-1)
+            i += N
+        end
+
+        close(ioobj)
+    end
+    @testset "ReadStream small readbytes! decompress" begin
+        multicsv = "1,2,3,4,5,6,7,8,9,1\n"^100; # 2000 B
+        codec = ZlibCompressor()
+        CodecZlib.initialize(codec)
+        compressed = transcode(codec, codeunits(multicsv))
+        nbytes_written = put_object(compressed, "test.csv.gz", config)
+        @test nbytes_written == length(compressed)
+        CodecZlib.finalize(codec)
+
+        buffer = Vector{UInt8}(undef, length(compressed))
+        nbytes_read = get_object!(buffer, "test.csv.gz", config)
+        @test nbytes_read == length(compressed)
+
+        N = 19
+        buf = Vector{UInt8}(undef, N)
+
+        ioobj = get_object_stream("test.csv.gz", config; decompress="zlib")
+        i = 1
+        while i < sizeof(multicsv)
+            nb = i + N > length(multicsv) ? length(multicsv) - i : N
+            readbytes!(ioobj, buf, N)
+            @test view(buf, 1:nb) == view(codeunits(multicsv), i:i+nb-1)
+            i += N
+        end
+
+        close(ioobj)
+    end
+    @testset "ReadStream large readbytes! decompress" begin
+        multicsv = "1,2,3,4,5,6,7,8,9,1\n"^1000000; # 20 MB
+        codec = ZlibCompressor()
+        CodecZlib.initialize(codec)
+        compressed = transcode(codec, codeunits(multicsv))
+        nbytes_written = put_object(compressed, "test.csv.gz", config)
+        @test nbytes_written == length(compressed)
+        CodecZlib.finalize(codec)
+
+        buffer = Vector{UInt8}(undef, length(compressed))
+        nbytes_read = get_object!(buffer, "test.csv.gz", config)
+        @test nbytes_read == length(compressed)
+
+        N = 1024*1024
+        buf = Vector{UInt8}(undef, N)
+
+        ioobj = get_object_stream("test.csv.gz", config; decompress="zlib")
+        i = 1
+        while i < sizeof(multicsv)
+            nb = i + N > length(multicsv) ? length(multicsv) - i : N
+            readbytes!(ioobj, buf, N)
+            @test view(buf, 1:nb) == view(codeunits(multicsv), i:i+nb-1)
+            i += N
+        end
+
+        close(ioobj)
+    end
+    @testset "ReadStream empty file readbytes! decompress" begin
+        multicsv = "" # 0 MB
+        codec = ZlibCompressor()
+        CodecZlib.initialize(codec)
+        compressed = transcode(codec, codeunits(multicsv))
+        nbytes_written = put_object(compressed, "test.csv.gz", config)
+        @test nbytes_written == length(compressed)
+        CodecZlib.finalize(codec)
+
+        buffer = Vector{UInt8}(undef, length(compressed))
+        nbytes_read = get_object!(buffer, "test.csv.gz", config)
+        @test nbytes_read == length(compressed)
+
+        N = 1024*1024
+        buf = ones(UInt8, N)
+
+        ioobj = get_object_stream("test.csv.gz", config; decompress="zlib")
+        readbytes!(ioobj, buf, N)
+        @test eof(ioobj)
+        @test all(buf .== 1)
+
+        close(ioobj)
+    end
+    @testset "ReadStream empty file readbytes!" begin
+        multicsv = "" # 0 MB
+        data = codeunits(multicsv)
+        nbytes_written = put_object(data, "test.csv", config)
+        @test nbytes_written == length(data)
+
+        buffer = Vector{UInt8}(undef, length(data))
+        nbytes_read = get_object!(buffer, "test.csv", config)
+        @test nbytes_read == length(data)
+
+        N = 1024*1024
+        buf = ones(UInt8, N)
+
+        ioobj = get_object_stream("test.csv", config)
+        readbytes!(ioobj, buf, N)
+        @test eof(ioobj)
+        @test all(buf .== 1)
+
+        close(ioobj)
+    end
+    @testset "ReadStream empty file unsafe_read" begin
+        multicsv = "" # 0 MB
+        data = codeunits(multicsv)
+        nbytes_written = put_object(data, "test.csv", config)
+        @test nbytes_written == length(data)
+
+        buffer = Vector{UInt8}(undef, length(data))
+        nbytes_read = get_object!(buffer, "test.csv", config)
+        @test nbytes_read == length(data)
+
+        N = 1024*1024
+        buf = ones(UInt8, N)
+
+        ioobj = get_object_stream("test.csv", config)
+        @test_throws EOFError unsafe_read(ioobj, pointer(buf), N)
+        @test eof(ioobj)
+        @test all(buf .== 1)
+
+        close(ioobj)
+    end
+    @testset "ReadStream read last byte" begin
+        multicsv = "1,2,3,4,5,6,7,8,9,1\n"^1000000; # 20 MB
+        nbytes_written = put_object(codeunits(multicsv), "test.csv", config)
+        @test nbytes_written == 20 * 1000 * 1000
+
+        buffer = Vector{UInt8}(undef, 20 * 1000 * 1000)
+        nbytes_read = get_object!(buffer, "test.csv", config)
+        @test nbytes_read == 20 * 1000 * 1000
+
+        N = length(multicsv) - 1
+        buf = Vector{UInt8}(undef, N)
+        copyto!(buf, 1, buffer, 1, N)
+        @test buf == view(codeunits(multicsv), 1:N)
+
+        ioobj = get_object_stream("test.csv", config)
+        readbytes!(ioobj, buf, N)
+        @test buf == view(codeunits(multicsv), 1:N)
+        @test read(ioobj, UInt8) == UInt8(last(multicsv))
+
+        close(ioobj)
+    end
+    @testset "ReadStream read bytes into file" begin
+        multicsv = "1,2,3,4,5,6,7,8,9,1\n"^1000000; # 20 MB
+        nbytes_written = put_object(codeunits(multicsv), "test.csv", config)
+        @test nbytes_written == 20 * 1000 * 1000
+
+        buffer = Vector{UInt8}(undef, 20 * 1000 * 1000)
+        nbytes_read = get_object!(buffer, "test.csv", config)
+        @test nbytes_read == 20 * 1000 * 1000
+
+
+        (path, io) = mktemp()
+        rs = get_object_stream("test.csv", config)
+        write(io, rs)
+        close(io)
+
+        io = open(path, "r")
+        filedata = read(io)
+        @test length(filedata) == length(codeunits(multicsv))
+        close(io)
+
+        @test buffer == codeunits(multicsv)
+
+        close(rs)
+    end
+
+    # WriteStream
+    @testset "WriteStream write small bytes" begin
+        multicsv = "1,2,3,4,5,6,7,8,9,1\n"^100; # 2000 B
+
+        N = 2000
+        ws = put_object_stream("test.csv", config)
+
+        i = 1
+        while i < sizeof(multicsv)
+            nb = i + N > length(multicsv) ? length(multicsv)-i+1 : N
+            buf = Vector{UInt8}(undef, nb)
+            copyto!(buf, 1, codeunits(multicsv), i, nb)
+            write(ws, buf)
+            i += N
+        end
+
+        close(ws)
+
+        rs = get_object_stream("test.csv", config)
+        objdata = read(rs)
+        @test objdata == codeunits(multicsv)
+    end
+    @testset "WriteStream write large bytes" begin
+        multicsv = "1,2,3,4,5,6,7,8,9,1\n"^1000000; # 20MB
+
+        N = 2000000
+        ws = put_object_stream("test.csv", config)
+
+        i = 1
+        while i < sizeof(multicsv)
+            nb = i + N > length(multicsv) ? length(multicsv)-i+1 : N
+            buf = Vector{UInt8}(undef, nb)
+            copyto!(buf, 1, codeunits(multicsv), i, nb)
+            write(ws, buf)
+            i += N
+        end
+
+        close(ws)
+
+        rs = get_object_stream("test.csv", config)
+        objdata = read(rs)
+        @test objdata == codeunits(multicsv)
+    end
+    @testset "WriteStream write empty" begin
+        multicsv = ""; # 0 B
+
+        ws = put_object_stream("test.csv", config)
+
+        write(ws, codeunits(multicsv))
+
+        close(ws)
+
+        rs = get_object_stream("test.csv", config)
+        objdata = read(rs)
+        @test objdata == codeunits(multicsv)
+    end
+    @testset "WriteStream write small bytes and compress" begin
+        multicsv = "1,2,3,4,5,6,7,8,9,1\n"^100; # 2000 B
+
+        N = 2000
+        ws = put_object_stream("test.csv.gz", config; compress="gzip")
+
+        i = 1
+        while i < sizeof(multicsv)
+            nb = i + N > length(multicsv) ? length(multicsv)-i+1 : N
+            buf = Vector{UInt8}(undef, nb)
+            copyto!(buf, 1, codeunits(multicsv), i, nb)
+            write(ws, buf)
+            i += N
+        end
+
+        close(ws)
+
+        rs = get_object_stream("test.csv.gz", config; decompress="gzip")
+        objdata = read(rs)
+        @test objdata == codeunits(multicsv)
+    end
+    @testset "WriteStream write large bytes and compress" begin
+        multicsv = "1,2,3,4,5,6,7,8,9,1\n"^1000000; # 20MB
+
+        N = 2000000
+        ws = put_object_stream("test.csv", config; compress="gzip")
+
+        i = 1
+        while i < sizeof(multicsv)
+            nb = i + N > length(multicsv) ? length(multicsv)-i+1 : N
+            buf = Vector{UInt8}(undef, nb)
+            copyto!(buf, 1, codeunits(multicsv), i, nb)
+            write(ws, buf)
+            i += N
+        end
+
+        close(ws)
+
+        rs = get_object_stream("test.csv", config; decompress="gzip")
+        objdata = read(rs)
+        @test objdata == codeunits(multicsv)
+    end
+    @testset "WriteStream write bytes from file" begin
+        multicsv = "1,2,3,4,5,6,7,8,9,1\n"^1000000; # 20MB
+
+        N = 2000000
+
+        (path, io) = mktemp()
+        written = write(io, codeunits(multicsv))
+        @test written == length(codeunits(multicsv))
+        close(io)
+
+        ws = put_object_stream("test.csv", config)
+
+        io = open(path, "r")
+        write(ws, io)
+        close(ws)
+
+        rs = get_object_stream("test.csv", config)
+        objdata = read(rs)
+        @test objdata == codeunits(multicsv)
+    end
+end
 
 function run_read_write_test_cases(read_config::AbstractConfig, write_config::AbstractConfig = read_config)
     @testset "0B file, 0B buffer" begin
@@ -149,6 +536,7 @@ Azurite.with(; debug=true, public=false) do conf
     )
 
     run_read_write_test_cases(config)
+    run_stream_test_cases(config)
 end # Azurite.with
 
 end # @testitem
@@ -198,14 +586,12 @@ Minio.with(; debug=true, public=false) do conf
     )
 
     run_read_write_test_cases(config)
+    run_stream_test_cases(config)
 
 end # Minio.with
 end # @testitem
 
 @testitem "Basic AWS S3 usage (anonymous read enabled)" setup=[InitializeObjectStore, ReadWriteCases] begin
-# TODO: currently object_store defaults to Instance credentials when no other credentials are supplied
-# (see https://github.com/RelationalAI/RustyObjectStore.jl/issues/22)
-@test_skip begin
 using CloudBase.CloudTest: Minio
 using RustyObjectStore: AWSConfig, ClientOptions
 
@@ -230,5 +616,4 @@ Minio.with(; debug=true, public=true) do conf
 
     run_read_write_test_cases(config_no_creds, config)
 end # Minio.with
-end # @test_skip
 end # @testitem

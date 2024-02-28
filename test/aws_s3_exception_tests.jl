@@ -159,7 +159,7 @@ end # @testitem
 @testitem "AWS S3 retries" setup=[InitializeObjectStore] begin
     using CloudBase.CloudTest: Minio
     import CloudBase
-    using RustyObjectStore: get_object!, put_object, AWSConfig, ClientOptions
+    using RustyObjectStore: get_object!, put_object, AWSConfig, ClientOptions, is_timeout, is_early_eof, status_code
     import HTTP
     import Sockets
 
@@ -206,6 +206,7 @@ end # @testitem
             method === :GET && @test e isa RustyObjectStore.GetException
             method === :PUT && @test e isa RustyObjectStore.PutException
             @test occursin("connection closed", e.msg)
+            @test is_early_eof(e)
         finally
             close(tcp_server)
         end
@@ -244,6 +245,7 @@ end # @testitem
         catch e
             @test e isa RustyObjectStore.GetException
             @test occursin("end of file before message length reached", e.msg)
+            @test is_early_eof(e)
         finally
             close(http_server)
         end
@@ -288,6 +290,7 @@ end # @testitem
             method === :GET && @test e isa RustyObjectStore.GetException
             method === :PUT && @test e isa RustyObjectStore.PutException
             @test occursin(string(response_status), e.msg)
+            @test status_code(e) == response_status
             response_status < 500 && (@test occursin("response body from the dummy server", e.msg))
         finally
             close(http_server)
@@ -335,6 +338,7 @@ end # @testitem
         catch e
             method === :GET && @test e isa RustyObjectStore.GetException
             method === :PUT && @test e isa RustyObjectStore.PutException
+            @test is_timeout(e)
             @test occursin(string(message), e.msg)
         finally
             close(http_server)
