@@ -202,20 +202,21 @@ end # @testitem
 @testitem "BlobStorage retries" setup=[InitializeObjectStore] begin
     using CloudBase.CloudTest: Azurite
     import CloudBase
-    using RustyObjectStore: get_object!, put_object, AzureConfig, ClientOptions
+    using RustyObjectStore: get_object!, put_object, AWSConfig, ClientOptions, is_timeout, is_early_eof, status_code
     import HTTP
     import Sockets
 
     max_retries = 2
-    retry_timeout_secs = 2
+    retry_timeout_secs = 10
+    request_timeout_secs = 1
+    account = "myaccount"
+    container = "mycontainer"
+    shared_key_from_azurite = "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw=="
 
     function test_status(method, response_status, headers=nothing)
         @assert method === :GET || method === :PUT
         nrequests = Ref(0)
         response_body = "response body from the dummy server"
-        account = "myaccount"
-        container = "mycontainer"
-        shared_key_from_azurite = "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw=="
 
         (port, tcp_server) = Sockets.listenany(8081)
         http_server = HTTP.serve!(tcp_server) do request::HTTP.Request
@@ -248,7 +249,137 @@ end # @testitem
             method === :GET && @test e isa RustyObjectStore.GetException
             method === :PUT && @test e isa RustyObjectStore.PutException
             @test occursin(string(response_status), e.msg)
+            @test status_code(e) == response_status
             response_status < 500 && (@test occursin("response body from the dummy server", e.msg))
+        finally
+            close(http_server)
+        end
+        wait(http_server)
+        return nrequests[]
+    end
+
+    function test_tcp_error(method)
+        @assert method === :GET || method === :PUT
+        nrequests = Ref(0)
+
+        (port, tcp_server) = Sockets.listenany(8082)
+        @async begin
+            while true
+                sock = Sockets.accept(tcp_server)
+                _ = read(sock, 4)
+                close(sock)
+                nrequests[] += 1
+            end
+        end
+
+        baseurl = "http://127.0.0.1:$port/$account/$container/"
+        conf = AzureConfig(;
+            storage_account_name=account,
+            container_name=container,
+            storage_account_key=shared_key_from_azurite,
+            host=baseurl,
+            opts=ClientOptions(;
+                max_retries=max_retries,
+                retry_timeout_secs=retry_timeout_secs
+            )
+        )
+
+        try
+            method === :GET && get_object!(zeros(UInt8, 5), "blob", conf)
+            method === :PUT && put_object(codeunits("a,b,c"), "blob", conf)
+            @test false # Should have thrown an error
+        catch e
+            method === :GET && @test e isa RustyObjectStore.GetException
+            method === :PUT && @test e isa RustyObjectStore.PutException
+            @test occursin("connection closed", e.msg)
+            @test is_early_eof(e)
+        finally
+            close(tcp_server)
+        end
+        return nrequests[]
+    end
+
+    function test_get_stream_error()
+        nrequests = Ref(0)
+
+        (port, tcp_server) = Sockets.listenany(8083)
+        http_server = HTTP.listen!(tcp_server) do http::HTTP.Stream
+            nrequests[] += 1
+            HTTP.setstatus(http, 200)
+            HTTP.setheader(http, "Content-Length" => "20")
+            HTTP.setheader(http, "Last-Modified" => "Tue, 15 Oct 2019 12:45:26 GMT")
+            HTTP.setheader(http, "ETag" => "123")
+            HTTP.startwrite(http)
+            write(http, "not enough")
+            close(http.stream)
+        end
+
+        baseurl = "http://127.0.0.1:$port/$account/$container/"
+        conf = AzureConfig(;
+            storage_account_name=account,
+            container_name=container,
+            storage_account_key=shared_key_from_azurite,
+            host=baseurl,
+            opts=ClientOptions(;
+                max_retries=max_retries,
+                retry_timeout_secs=retry_timeout_secs
+            )
+        )
+
+        try
+            get_object!(zeros(UInt8, 20), "blob", conf)
+            @test false # Should have thrown an error
+        catch e
+            @test e isa RustyObjectStore.GetException
+            @test occursin("end of file before message length reached", e.msg)
+            @test is_early_eof(e)
+        finally
+            close(http_server)
+        end
+        wait(http_server)
+        return nrequests[]
+    end
+
+    function test_timeout(method, message, wait_secs::Int = 60)
+        @assert method === :GET || method === :PUT
+        nrequests = Ref(0)
+        response_body = "response body from the dummy server"
+
+        (port, tcp_server) = Sockets.listenany(8081)
+        http_server = HTTP.serve!(tcp_server) do request::HTTP.Request
+            if request.method == "GET" && request.target == "/$container/_this_file_does_not_exist"
+                # This is the exploratory ping from connect_and_test in lib.rs
+                return HTTP.Response(404, "Yup, still doesn't exist")
+            end
+            nrequests[] += 1
+            if wait_secs > 0
+                sleep(wait_secs)
+            end
+            return HTTP.Response(200, response_body)
+        end
+
+        baseurl = "http://127.0.0.1:$port/$account/$container/"
+        conf = AzureConfig(;
+            storage_account_name=account,
+            container_name=container,
+            storage_account_key=shared_key_from_azurite,
+            host=baseurl,
+            opts=ClientOptions(;
+                max_retries=max_retries,
+                retry_timeout_secs=retry_timeout_secs,
+                request_timeout_secs
+            )
+        )
+
+        try
+            method === :GET && get_object!(zeros(UInt8, 5), "blob", conf)
+            method === :PUT && put_object(codeunits("a,b,c"), "blob", conf)
+            @test false # Should have thrown an error
+        catch e
+            method === :GET && @test e isa RustyObjectStore.GetException
+            method === :PUT && @test e isa RustyObjectStore.PutException
+            @test is_timeout(e)
+            @test occursin(string(message), e.msg)
         finally
             close(http_server)
         end
@@ -381,6 +512,25 @@ end # @testitem
         nrequests = test_status(:GET, 504)
         @test nrequests == 1 + max_retries
         nrequests = test_status(:PUT, 504)
+        @test nrequests == 1 + max_retries
+    end
+
+    @testset "Timeout" begin
+        nrequests = test_timeout(:GET, "timed out", 2)
+        @test nrequests == 1 + max_retries
+        nrequests = test_timeout(:PUT, "timed out", 2)
+        @test nrequests == 1 + max_retries
+    end
+
+    @testset "TCP Closed" begin
+        nrequests = test_tcp_error(:GET)
+        @test nrequests == 1 + max_retries
+        nrequests = test_tcp_error(:PUT)
+        @test nrequests == 1 + max_retries
+    end
+
+    @testset "Incomplete GET body" begin
+        nrequests = test_get_stream_error()
         @test nrequests == 1 + max_retries
     end
 end
