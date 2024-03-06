@@ -444,6 +444,8 @@ struct AWSConfig <: AbstractConfig
 
         if !isnothing(host)
             params["minio_host"] = host
+        else
+            params["aws_virtual_hosted_style_request"] = "true"
         end
 
         if !use_instance_metadata && isnothing(access_key_id)
