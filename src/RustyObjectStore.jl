@@ -813,7 +813,7 @@ function Base.eof(io::ReadStream)
     if io.ended
         return true
     elseif !isnothing(io.error)
-        throw("stream stopped by prevoius error: $(stream.error)")
+        throw("stream stopped by prevoius error: $(io.error)")
     elseif bytesavailable(io) > 0
         return false
     else
