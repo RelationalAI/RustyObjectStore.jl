@@ -160,6 +160,19 @@ function throw_on_error(response, operation, exception)
     return :( $(esc(:($response.result == 1))) ? throw($exception($response_error_to_string($(esc(response)), $operation))) : $(nothing) )
 end
 
+function ensure_wait(cond::Base.AsyncCondition)
+    for i in 1:20
+        try
+            return wait(cond)
+        catch e
+            @error "cannot skip this wait point to prevent UB, ignoring exception: $(e)"
+        end
+    end
+
+    @error "ignored too many wait exceptions, giving up"
+    exit(1)
+end
+
 """
     $TYPEDEF
 
@@ -644,7 +657,7 @@ function get_object!(buffer::AbstractVector{UInt8}, path::String, conf::Abstract
                 cond_handle::Ptr{Cvoid}
             )::Cint
 
-            wait(cond)
+            ensure_wait(cond)
 
             result
         end
@@ -699,7 +712,7 @@ function put_object(buffer::AbstractVector{UInt8}, path::String, conf::AbstractC
                 cond_handle::Ptr{Cvoid}
             )::Cint
 
-            wait(cond)
+            ensure_wait(cond)
 
             result
         end
@@ -744,7 +757,7 @@ function delete_object(path::String, conf::AbstractConfig)
                 cond_handle::Ptr{Cvoid}
             )::Cint
 
-            wait(cond)
+            ensure_wait(cond)
 
             result
         end
@@ -816,7 +829,7 @@ function Base.eof(io::ReadStream)
 
             @assert result == 0
 
-            wait(cond)
+            ensure_wait(cond)
         end
 
         try
@@ -961,7 +974,7 @@ function get_object_stream(path::String, conf::AbstractConfig; size_hint::Int=0,
                 cond_handle::Ptr{Cvoid}
             )::Cint
 
-            wait(cond)
+            ensure_wait(cond)
 
             result
         end
@@ -1006,7 +1019,7 @@ function _unsafe_read(stream::ReadStream, dest::Ptr{UInt8}, bytes_to_read::Int)
             cond_handle::Ptr{Cvoid}
         )::Cint
 
-        wait(cond)
+        ensure_wait(cond)
     end
 
     try
@@ -1108,15 +1121,19 @@ function put_object_stream(path::String, conf::AbstractConfig; compress::String=
     cond_handle = cond.handle
     config = into_config(conf)
     while true
-        result = @ccall rust_lib.put_stream(
-            path::Cstring,
-            compress::Cstring,
-            config::Ref{Config},
-            response::Ref{WriteStreamResponseFFI},
-            cond_handle::Ptr{Cvoid}
-        )::Cint
+        result = GC.@preserve config response cond begin
+            result = @ccall rust_lib.put_stream(
+                path::Cstring,
+                compress::Cstring,
+                config::Ref{Config},
+                response::Ref{WriteStreamResponseFFI},
+                cond_handle::Ptr{Cvoid}
+            )::Cint
 
-        wait(cond)
+            ensure_wait(cond)
+
+            result
+        end
 
         if result == 2
             # backoff
@@ -1182,13 +1199,17 @@ function shutdown!(stream::WriteStream)
     response = WriteResponseFFI()
     cond = Base.AsyncCondition()
     cond_handle = cond.handle
-    result = @ccall rust_lib.shutdown_write_stream(
-        stream.ptr::Ptr{Cvoid},
-        response::Ref{WriteResponseFFI},
-        cond_handle::Ptr{Cvoid}
-    )::Cint
+    GC.@preserve stream response cond begin
+        result = @ccall rust_lib.shutdown_write_stream(
+            stream.ptr::Ptr{Cvoid},
+            response::Ref{WriteResponseFFI},
+            cond_handle::Ptr{Cvoid}
+        )::Cint
 
-    wait(cond)
+        @assert result == 0
+
+        ensure_wait(cond)
+    end
 
     try
         @throw_on_error(response, "shutdown_write_stream", PutException)
@@ -1252,16 +1273,20 @@ function _unsafe_write(stream::WriteStream, input::Ptr{UInt8}, nbytes::Int; flus
     response = WriteResponseFFI()
     cond = Base.AsyncCondition()
     cond_handle = cond.handle
-    result = @ccall rust_lib.write_to_stream(
-        stream.ptr::Ptr{Cvoid},
-        input::Ptr{UInt8},
-        nbytes::Culonglong,
-        flush::Cuchar,
-        response::Ref{WriteResponseFFI},
-        cond_handle::Ptr{Cvoid}
-    )::Cint
+    GC.@preserve stream response cond begin
+        result = @ccall rust_lib.write_to_stream(
+            stream.ptr::Ptr{Cvoid},
+            input::Ptr{UInt8},
+            nbytes::Culonglong,
+            flush::Cuchar,
+            response::Ref{WriteResponseFFI},
+            cond_handle::Ptr{Cvoid}
+        )::Cint
 
-    wait(cond)
+        @assert result == 0
+
+        ensure_wait(cond)
+    end
 
     try
         @throw_on_error(response, "write_to_stream", PutException)
