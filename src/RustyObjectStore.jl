@@ -173,6 +173,22 @@ function ensure_wait(cond::Base.AsyncCondition)
     exit(1)
 end
 
+function wait_or_cancel(cond::Base.AsyncCondition, response)
+    try
+        return wait(cond)
+    catch e
+        errormonitor(Threads.@spawn begin
+            yield()
+            @ccall rust_lib.cancel_context(response.context::Ptr{Cvoid})::Cint
+        end)
+        ensure_wait(cond)
+        @ccall rust_lib.destroy_cstring(response.error_message::Ptr{Cchar})::Cint
+        rethrow()
+    finally
+        @ccall rust_lib.destroy_context(response.context::Ptr{Cvoid})::Cint
+    end
+end
+
 """
     $TYPEDEF
 
@@ -502,8 +518,9 @@ mutable struct Response
     result::Cint
     length::Culonglong
     error_message::Ptr{Cchar}
+    context::Ptr{Cvoid}
 
-    Response() = new(-1, 0, C_NULL)
+    Response() = new(-1, 0, C_NULL, C_NULL)
 end
 
 abstract type ErrorReason end
@@ -550,27 +567,31 @@ function reason(e::DeleteException)
     return e.reason::ErrorReason
 end
 
-function status_code(e::RequestException)
+function reason(e::Exception)
+    return UnknownError()
+end
+
+function status_code(e::Exception)
     return reason(e) isa StatusError ? reason(e).code : nothing
 end
 
-function is_connection(e::RequestException)
+function is_connection(e::Exception)
     return reason(e) isa ConnectionError
 end
 
-function is_timeout(e::RequestException)
+function is_timeout(e::Exception)
     return reason(e) isa TimeoutError
 end
 
-function is_early_eof(e::RequestException)
+function is_early_eof(e::Exception)
     return reason(e) isa EarlyEOF
 end
 
-function is_parse_url(e::RequestException)
+function is_parse_url(e::Exception)
     return reason(e) isa ParseURLError
 end
 
-function is_unknown(e::RequestException)
+function is_unknown(e::Exception)
     return reason(e) isa UnknownError
 end
 
@@ -657,7 +678,7 @@ function get_object!(buffer::AbstractVector{UInt8}, path::String, conf::Abstract
                 cond_handle::Ptr{Cvoid}
             )::Cint
 
-            ensure_wait(cond)
+            wait_or_cancel(cond, response)
 
             result
         end
@@ -712,7 +733,7 @@ function put_object(buffer::AbstractVector{UInt8}, path::String, conf::AbstractC
                 cond_handle::Ptr{Cvoid}
             )::Cint
 
-            ensure_wait(cond)
+            wait_or_cancel(cond, response)
 
             result
         end
@@ -757,7 +778,7 @@ function delete_object(path::String, conf::AbstractConfig)
                 cond_handle::Ptr{Cvoid}
             )::Cint
 
-            ensure_wait(cond)
+            wait_or_cancel(cond, response)
 
             result
         end
@@ -779,8 +800,9 @@ mutable struct ReadResponseFFI
     length::Culonglong
     eof::Cuchar
     error_message::Ptr{Cchar}
+    context::Ptr{Cvoid}
 
-    ReadResponseFFI() = new(-1, 0, 0, C_NULL)
+    ReadResponseFFI() = new(-1, 0, 0, C_NULL, C_NULL)
 end
 
 mutable struct ReadStreamResponseFFI
@@ -788,8 +810,9 @@ mutable struct ReadStreamResponseFFI
     stream::Ptr{Nothing}
     object_size::Culonglong
     error_message::Ptr{Cchar}
+    context::Ptr{Cvoid}
 
-    ReadStreamResponseFFI() = new(-1, C_NULL, 0, C_NULL)
+    ReadStreamResponseFFI() = new(-1, C_NULL, 0, C_NULL, C_NULL)
 end
 
 """
@@ -829,7 +852,7 @@ function Base.eof(io::ReadStream)
 
             @assert result == 0
 
-            ensure_wait(cond)
+            wait_or_cancel(cond, response)
         end
 
         try
@@ -974,7 +997,7 @@ function get_object_stream(path::String, conf::AbstractConfig; size_hint::Int=0,
                 cond_handle::Ptr{Cvoid}
             )::Cint
 
-            ensure_wait(cond)
+            wait_or_cancel(cond, response)
 
             result
         end
@@ -1019,7 +1042,7 @@ function _unsafe_read(stream::ReadStream, dest::Ptr{UInt8}, bytes_to_read::Int)
             cond_handle::Ptr{Cvoid}
         )::Cint
 
-        ensure_wait(cond)
+        wait_or_cancel(cond, response)
     end
 
     try
@@ -1068,16 +1091,18 @@ mutable struct WriteResponseFFI
     result::Cint
     length::Culonglong
     error_message::Ptr{Cchar}
+    context::Ptr{Cvoid}
 
-    WriteResponseFFI() = new(-1, 0, C_NULL)
+    WriteResponseFFI() = new(-1, 0, C_NULL, C_NULL)
 end
 
 mutable struct WriteStreamResponseFFI
     result::Cint
     stream::Ptr{Nothing}
     error_message::Ptr{Cchar}
+    context::Ptr{Cvoid}
 
-    WriteStreamResponseFFI() = new(-1, C_NULL, C_NULL)
+    WriteStreamResponseFFI() = new(-1, C_NULL, C_NULL, C_NULL)
 end
 
 """
@@ -1130,7 +1155,7 @@ function put_object_stream(path::String, conf::AbstractConfig; compress::String=
                 cond_handle::Ptr{Cvoid}
             )::Cint
 
-            ensure_wait(cond)
+            wait_or_cancel(cond, response)
 
             result
         end
@@ -1208,7 +1233,7 @@ function shutdown!(stream::WriteStream)
 
         @assert result == 0
 
-        ensure_wait(cond)
+        wait_or_cancel(cond, response)
     end
 
     try
@@ -1285,7 +1310,7 @@ function _unsafe_write(stream::WriteStream, input::Ptr{UInt8}, nbytes::Int; flus
 
         @assert result == 0
 
-        ensure_wait(cond)
+        wait_or_cancel(cond, response)
     end
 
     try
