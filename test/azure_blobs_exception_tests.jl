@@ -398,6 +398,60 @@ end # @testitem
         return nrequests[]
     end
 
+    function test_cancellation()
+        nrequests = Ref(0)
+        response_body = "response body from the dummy server"
+
+        (port, tcp_server) = Sockets.listenany(8081)
+        http_server = HTTP.serve!(tcp_server) do request::HTTP.Request
+            if request.method == "GET" && request.target == "/$container/_this_file_does_not_exist"
+                # This is the exploratory ping from connect_and_test in lib.rs
+                return HTTP.Response(404, "Yup, still doesn't exist")
+            end
+            nrequests[] += 1
+            sleep(5)
+            return HTTP.Response(200, response_body)
+        end
+
+        baseurl = "http://127.0.0.1:$port/$account/$container/"
+        conf = AzureConfig(;
+            storage_account_name=account,
+            container_name=container,
+            storage_account_key=shared_key_from_azurite,
+            host=baseurl,
+            opts=ClientOptions(;
+                max_retries=max_retries,
+                retry_timeout_secs=retry_timeout_secs,
+                request_timeout_secs
+            )
+        )
+
+        try
+            size = 7_000_000
+            ptr = Base.Libc.malloc(size)
+            buf = unsafe_wrap(Array, convert(Ptr{UInt8}, ptr), size)
+            t = errormonitor(Threads.@spawn begin
+                try
+                    RustyObjectStore.put_object(buf, "cancelled.bin", conf)
+                    @test false
+                catch e
+                    @test e == "cancel"
+                finally
+                    Base.Libc.free(ptr)
+                end
+
+                true
+            end)
+            sleep(1)
+            schedule(t, "cancel"; error=true)
+            @test fetch(t::Task)
+        finally
+            HTTP.forceclose(http_server)
+        end
+        wait(http_server)
+        return nrequests[]
+    end
+
     @testset "400: Bad Request" begin
         # Returned when there's an error in the request URI, headers, or body. The response body
         # contains an error message explaining what the specific problem is.
@@ -543,5 +597,10 @@ end # @testitem
     @testset "Incomplete GET body" begin
         nrequests = test_get_stream_error()
         @test nrequests == 1 + max_retries
+    end
+
+    @testset "Cancellation" begin
+        nrequests = test_cancellation()
+        @test nrequests == 1
     end
 end

@@ -160,6 +160,32 @@ function throw_on_error(response, operation, exception)
     return :( $(esc(:($response.result == 1))) ? throw($exception($response_error_to_string($(esc(response)), $operation))) : $(nothing) )
 end
 
+function ensure_wait(cond::Base.AsyncCondition)
+    for i in 1:20
+        try
+            return wait(cond)
+        catch e
+            @error "cannot skip this wait point to prevent UB, ignoring exception: $(e)"
+        end
+    end
+
+    @error "ignored too many wait exceptions, giving up"
+    exit(1)
+end
+
+function wait_or_cancel(cond::Base.AsyncCondition, response)
+    try
+        return wait(cond)
+    catch e
+        @ccall rust_lib.cancel_context(response.context::Ptr{Cvoid})::Cint
+        ensure_wait(cond)
+        @ccall rust_lib.destroy_cstring(response.error_message::Ptr{Cchar})::Cint
+        rethrow()
+    finally
+        @ccall rust_lib.destroy_context(response.context::Ptr{Cvoid})::Cint
+    end
+end
+
 """
     $TYPEDEF
 
@@ -485,12 +511,13 @@ function Base.show(io::IO, conf::AWSConfig)
     print(io, ", ", "opts=", repr(conf.opts), ")")
 end
 
-struct Response
+mutable struct Response
     result::Cint
     length::Culonglong
     error_message::Ptr{Cchar}
+    context::Ptr{Cvoid}
 
-    Response() = new(-1, 0, C_NULL)
+    Response() = new(-1, 0, C_NULL, C_NULL)
 end
 
 abstract type ErrorReason end
@@ -537,27 +564,31 @@ function reason(e::DeleteException)
     return e.reason::ErrorReason
 end
 
-function status_code(e::RequestException)
+function reason(e::Exception)
+    return UnknownError()
+end
+
+function status_code(e::Exception)
     return reason(e) isa StatusError ? reason(e).code : nothing
 end
 
-function is_connection(e::RequestException)
+function is_connection(e::Exception)
     return reason(e) isa ConnectionError
 end
 
-function is_timeout(e::RequestException)
+function is_timeout(e::Exception)
     return reason(e) isa TimeoutError
 end
 
-function is_early_eof(e::RequestException)
+function is_early_eof(e::Exception)
     return reason(e) isa EarlyEOF
 end
 
-function is_parse_url(e::RequestException)
+function is_parse_url(e::Exception)
     return reason(e) isa ParseURLError
 end
 
-function is_unknown(e::RequestException)
+function is_unknown(e::Exception)
     return reason(e) isa UnknownError
 end
 
@@ -628,22 +659,26 @@ Fetches the data bytes at `path` and writes them to the given `buffer`.
 - `GetException`: If the request fails for any reason, including if the `buffer` is too small.
 """
 function get_object!(buffer::AbstractVector{UInt8}, path::String, conf::AbstractConfig)
-    response_ref = Ref(Response())
+    response = Response()
     size = length(buffer)
     cond = Base.AsyncCondition()
     cond_handle = cond.handle
     config = into_config(conf)
     while true
-        result = @ccall rust_lib.get(
-            path::Cstring,
-            buffer::Ref{Cuchar},
-            size::Culonglong,
-            config::Ref{Config},
-            response_ref::Ref{Response},
-            cond_handle::Ptr{Cvoid}
-        )::Cint
+        result = GC.@preserve buffer config response cond begin
+            result = @ccall rust_lib.get(
+                path::Cstring,
+                buffer::Ref{Cuchar},
+                size::Culonglong,
+                config::Ref{Config},
+                response::Ref{Response},
+                cond_handle::Ptr{Cvoid}
+            )::Cint
 
-        wait(cond)
+            wait_or_cancel(cond, response)
+
+            result
+        end
 
         if result == 2
             # backoff
@@ -651,7 +686,6 @@ function get_object!(buffer::AbstractVector{UInt8}, path::String, conf::Abstract
             continue
         end
 
-        response = response_ref[]
         @throw_on_error(response, "get", GetException)
 
         return Int(response.length)
@@ -680,22 +714,26 @@ Atomically writes the data bytes in `buffer` to `path`.
 - `PutException`: If the request fails for any reason.
 """
 function put_object(buffer::AbstractVector{UInt8}, path::String, conf::AbstractConfig)
-    response_ref = Ref(Response())
+    response = Response()
     size = length(buffer)
     cond = Base.AsyncCondition()
     cond_handle = cond.handle
     config = into_config(conf)
     while true
-        result = @ccall rust_lib.put(
-            path::Cstring,
-            buffer::Ref{Cuchar},
-            size::Culonglong,
-            config::Ref{Config},
-            response_ref::Ref{Response},
-            cond_handle::Ptr{Cvoid}
-        )::Cint
+        result = GC.@preserve buffer config response cond begin
+            result = @ccall rust_lib.put(
+                path::Cstring,
+                buffer::Ref{Cuchar},
+                size::Culonglong,
+                config::Ref{Config},
+                response::Ref{Response},
+                cond_handle::Ptr{Cvoid}
+            )::Cint
 
-        wait(cond)
+            wait_or_cancel(cond, response)
+
+            result
+        end
 
         if result == 2
             # backoff
@@ -703,7 +741,6 @@ function put_object(buffer::AbstractVector{UInt8}, path::String, conf::AbstractC
             continue
         end
 
-        response = response_ref[]
         @throw_on_error(response, "put", PutException)
 
         return Int(response.length)
@@ -725,19 +762,23 @@ Send a delete request to the object store.
   to a non-existing object as a success, while Azure Blob will treat it as a 404 error.
 """
 function delete_object(path::String, conf::AbstractConfig)
-    response_ref = Ref(Response())
+    response = Response()
     cond = Base.AsyncCondition()
     cond_handle = cond.handle
     config = into_config(conf)
     while true
-        result = @ccall rust_lib.delete(
-            path::Cstring,
-            config::Ref{Config},
-            response_ref::Ref{Response},
-            cond_handle::Ptr{Cvoid}
-        )::Cint
+        result = GC.@preserve config response cond begin
+            result = @ccall rust_lib.delete(
+                path::Cstring,
+                config::Ref{Config},
+                response::Ref{Response},
+                cond_handle::Ptr{Cvoid}
+            )::Cint
 
-        wait(cond)
+            wait_or_cancel(cond, response)
+
+            result
+        end
 
         if result == 2
             # backoff
@@ -745,29 +786,30 @@ function delete_object(path::String, conf::AbstractConfig)
             continue
         end
 
-        response = response_ref[]
         @throw_on_error(response, "delete_object", DeleteException)
 
         return nothing
     end
 end
 
-struct ReadResponseFFI
+mutable struct ReadResponseFFI
     result::Cint
     length::Culonglong
     eof::Cuchar
     error_message::Ptr{Cchar}
+    context::Ptr{Cvoid}
 
-    ReadResponseFFI() = new(-1, 0, 0, C_NULL)
+    ReadResponseFFI() = new(-1, 0, 0, C_NULL, C_NULL)
 end
 
-struct ReadStreamResponseFFI
+mutable struct ReadStreamResponseFFI
     result::Cint
     stream::Ptr{Nothing}
     object_size::Culonglong
     error_message::Ptr{Cchar}
+    context::Ptr{Cvoid}
 
-    ReadStreamResponseFFI() = new(-1, C_NULL, 0, C_NULL)
+    ReadStreamResponseFFI() = new(-1, C_NULL, 0, C_NULL, C_NULL)
 end
 
 """
@@ -790,43 +832,44 @@ end
 function Base.eof(io::ReadStream)
     if io.ended
         return true
+    elseif !isnothing(io.error)
+        throw("stream stopped by prevoius error: $(io.error)")
     elseif bytesavailable(io) > 0
         return false
     else
-        response_ref = Ref(ReadResponseFFI())
+        response = ReadResponseFFI()
         cond = Base.AsyncCondition()
         cond_handle = cond.handle
-        result = @ccall rust_lib.is_end_of_stream(
-            io.ptr::Ptr{Cvoid},
-            response_ref::Ref{ReadResponseFFI},
-            cond_handle::Ptr{Cvoid}
-        )::Cint
+        GC.@preserve io response cond begin
+            result = @ccall rust_lib.is_end_of_stream(
+                io.ptr::Ptr{Cvoid},
+                response::Ref{ReadResponseFFI},
+                cond_handle::Ptr{Cvoid}
+            )::Cint
 
-        @assert result == 0
+            @assert result == 0
 
-        wait(cond)
+            wait_or_cancel(cond, response)
+        end
 
-        response = response_ref[]
         try
             @throw_on_error(response, "is_end_of_stream", GetException)
         catch e
-            io.error = e.msg
-            @ccall rust_lib.destroy_read_stream(io.ptr::Ptr{Nothing})::Cint
+            stream_error(io, e.msg)
             rethrow()
         end
 
         eof = response.eof > 0
 
         if eof
-            io.ended = true
-            @ccall rust_lib.destroy_read_stream(io.ptr::Ptr{Nothing})::Cint
+            stream_end(io)
         end
 
         return eof
     end
 end
 function Base.bytesavailable(io::ReadStream)
-    if io.ended
+    if !Base.isopen(io)
         return 0
     else
         result = @ccall rust_lib.bytes_available(io.ptr::Ptr{Cvoid})::Clonglong
@@ -842,6 +885,18 @@ end
 Base.isopen(io::ReadStream) = !io.ended && isnothing(io.error)
 Base.iswritable(io::ReadStream) = false
 Base.filesize(io::ReadStream) = io.object_size
+
+function stream_end(io::ReadStream)
+    @assert Base.isopen(io)
+    io.ended = true
+    @ccall rust_lib.destroy_read_stream(io.ptr::Ptr{Nothing})::Cint
+end
+
+function stream_error(io::ReadStream, err::String)
+    @assert Base.isopen(io)
+    io.error = err
+    @ccall rust_lib.destroy_read_stream(io.ptr::Ptr{Nothing})::Cint
+end
 
 function Base.readbytes!(io::ReadStream, dest::AbstractVector{UInt8}, n)
     eof(io) && return 0
@@ -923,22 +978,26 @@ Send a get request to the object store returning a stream of object data.
 - `GetException`: If the request fails for any reason.
 """
 function get_object_stream(path::String, conf::AbstractConfig; size_hint::Int=0, decompress::String="")
-    response_ref = Ref(ReadStreamResponseFFI())
+    response = ReadStreamResponseFFI()
     cond = Base.AsyncCondition()
     cond_handle = cond.handle
     config = into_config(conf)
     hint = convert(UInt64, size_hint)
     while true
-        result = @ccall rust_lib.get_stream(
-            path::Cstring,
-            hint::Culonglong,
-            decompress::Cstring,
-            config::Ref{Config},
-            response_ref::Ref{ReadStreamResponseFFI},
-            cond_handle::Ptr{Cvoid}
-        )::Cint
+        result = GC.@preserve config response cond begin
+            result = @ccall rust_lib.get_stream(
+                path::Cstring,
+                hint::Culonglong,
+                decompress::Cstring,
+                config::Ref{Config},
+                response::Ref{ReadStreamResponseFFI},
+                cond_handle::Ptr{Cvoid}
+            )::Cint
 
-        wait(cond)
+            wait_or_cancel(cond, response)
+
+            result
+        end
 
         if result == 2
             # backoff
@@ -946,7 +1005,6 @@ function get_object_stream(path::String, conf::AbstractConfig; size_hint::Int=0,
             continue
         end
 
-        response = response_ref[]
         # No need to destroy_read_stream in case of errors here
         @throw_on_error(response, "get_stream", GetException)
 
@@ -965,30 +1023,29 @@ function _unsafe_read(stream::ReadStream, dest::Ptr{UInt8}, bytes_to_read::Int)
         return nothing
     end
     if !isnothing(stream.error)
-        @error "stream stopped by prevoius error: $(stream.error)"
-        return nothing
+        throw("stream stopped by prevoius error: $(stream.error)")
     end
 
-    response_ref = Ref(ReadResponseFFI())
+    response = ReadResponseFFI()
     cond = Base.AsyncCondition()
     cond_handle = cond.handle
-    result = @ccall rust_lib.read_from_stream(
-        stream.ptr::Ptr{Cvoid},
-        dest::Ptr{UInt8},
-        bytes_to_read::Culonglong,
-        bytes_to_read::Culonglong,
-        response_ref::Ref{ReadResponseFFI},
-        cond_handle::Ptr{Cvoid}
-    )::Cint
+    GC.@preserve stream dest response cond begin
+        result = @ccall rust_lib.read_from_stream(
+            stream.ptr::Ptr{Cvoid},
+            dest::Ptr{UInt8},
+            bytes_to_read::Culonglong,
+            bytes_to_read::Culonglong,
+            response::Ref{ReadResponseFFI},
+            cond_handle::Ptr{Cvoid}
+        )::Cint
 
-    wait(cond)
+        wait_or_cancel(cond, response)
+    end
 
-    response = response_ref[]
     try
         @throw_on_error(response, "read_from_stream", GetException)
     catch e
-        stream.error = e.msg
-        @ccall rust_lib.destroy_read_stream(stream.ptr::Ptr{Nothing})::Cint
+        stream_error(stream, e.msg)
         rethrow()
     end
 
@@ -997,13 +1054,11 @@ function _unsafe_read(stream::ReadStream, dest::Ptr{UInt8}, bytes_to_read::Int)
         if response.eof == 0
             return convert(Int, response.length)
         else
-            stream.ended = true
-            @ccall rust_lib.destroy_read_stream(stream.ptr::Ptr{Nothing})::Cint
+            stream_end(stream)
             return convert(Int, response.length)
         end
     else
-        stream.ended = true
-        @ccall rust_lib.destroy_read_stream(stream.ptr::Ptr{Nothing})::Cint
+        stream_end(stream)
         return nothing
     end
 end
@@ -1022,31 +1077,29 @@ This function is not thread-safe.
 - `was_running::Bool`: Indicates if the stream was running when `finish!` was called.
 """
 function finish!(stream::ReadStream)
-    if stream.ended
+    if !Base.isopen(stream)
         return false
     end
-    if !isnothing(stream.error)
-        return false
-    end
-    stream.ended = true
-    @ccall rust_lib.destroy_read_stream(stream.ptr::Ptr{Nothing})::Cint
+    stream_end(stream)
     return true
 end
 
-struct WriteResponseFFI
+mutable struct WriteResponseFFI
     result::Cint
     length::Culonglong
     error_message::Ptr{Cchar}
+    context::Ptr{Cvoid}
 
-    WriteResponseFFI() = new(-1, 0, C_NULL)
+    WriteResponseFFI() = new(-1, 0, C_NULL, C_NULL)
 end
 
-struct WriteStreamResponseFFI
+mutable struct WriteStreamResponseFFI
     result::Cint
     stream::Ptr{Nothing}
     error_message::Ptr{Cchar}
+    context::Ptr{Cvoid}
 
-    WriteStreamResponseFFI() = new(-1, C_NULL, C_NULL)
+    WriteStreamResponseFFI() = new(-1, C_NULL, C_NULL, C_NULL)
 end
 
 """
@@ -1085,20 +1138,24 @@ Send a put request to the object store returning a stream to write data into.
 - `PutException`: If the request fails for any reason.
 """
 function put_object_stream(path::String, conf::AbstractConfig; compress::String="")
-    response_ref = Ref(WriteStreamResponseFFI())
+    response = WriteStreamResponseFFI()
     cond = Base.AsyncCondition()
     cond_handle = cond.handle
     config = into_config(conf)
     while true
-        result = @ccall rust_lib.put_stream(
-            path::Cstring,
-            compress::Cstring,
-            config::Ref{Config},
-            response_ref::Ref{WriteStreamResponseFFI},
-            cond_handle::Ptr{Cvoid}
-        )::Cint
+        result = GC.@preserve config response cond begin
+            result = @ccall rust_lib.put_stream(
+                path::Cstring,
+                compress::Cstring,
+                config::Ref{Config},
+                response::Ref{WriteStreamResponseFFI},
+                cond_handle::Ptr{Cvoid}
+            )::Cint
 
-        wait(cond)
+            wait_or_cancel(cond, response)
+
+            result
+        end
 
         if result == 2
             # backoff
@@ -1106,7 +1163,6 @@ function put_object_stream(path::String, conf::AbstractConfig; compress::String=
             continue
         end
 
-        response = response_ref[]
         # No need to destroy_write_stream in case of errors here
         @throw_on_error(response, "put_stream", PutException)
 
@@ -1135,14 +1191,10 @@ This function is not thread-safe.
 - `was_writeable::Bool`: Indicates if the stream was writeable when `cancel!` was called.
 """
 function cancel!(stream::WriteStream)
-    if stream.destroyed
+    if !Base.isopen(stream)
         return false
     end
-    if !isnothing(stream.error)
-        return false
-    end
-    @ccall rust_lib.destroy_write_stream(stream.ptr::Ptr{Nothing})::Cint
-    stream.destroyed = true
+    stream_destroy(stream)
     return true
 end
 
@@ -1166,30 +1218,30 @@ function shutdown!(stream::WriteStream)
         throw(PutException("Tried to shutdown a destroyed stream (from a previous `cancel!` or `shutdown!`)"))
     end
 
-    response_ref = Ref(WriteResponseFFI())
+    response = WriteResponseFFI()
     cond = Base.AsyncCondition()
     cond_handle = cond.handle
-    result = @ccall rust_lib.shutdown_write_stream(
-        stream.ptr::Ptr{Cvoid},
-        response_ref::Ref{WriteResponseFFI},
-        cond_handle::Ptr{Cvoid}
-    )::Cint
+    GC.@preserve stream response cond begin
+        result = @ccall rust_lib.shutdown_write_stream(
+            stream.ptr::Ptr{Cvoid},
+            response::Ref{WriteResponseFFI},
+            cond_handle::Ptr{Cvoid}
+        )::Cint
 
-    wait(cond)
+        @assert result == 0
 
-    response = response_ref[]
+        wait_or_cancel(cond, response)
+    end
+
     try
         @throw_on_error(response, "shutdown_write_stream", PutException)
     catch e
-        stream.error = e.msg
-        @ccall rust_lib.destroy_write_stream(stream.ptr::Ptr{Nothing})::Cint
-        stream.destroyed = true
+        stream_error(stream, e.msg)
         rethrow()
     end
 
     if response.result == 0
-        @ccall rust_lib.destroy_write_stream(stream.ptr::Ptr{Nothing})::Cint
-        stream.destroyed = true
+        stream_destroy(stream)
         return nothing
     else
         @assert false "unreachable"
@@ -1220,6 +1272,18 @@ function Base.write(to::WriteStream, from::ReadStream)
     return _forward(to, from)
 end
 
+function stream_destroy(io::WriteStream)
+    @assert Base.isopen(io)
+    io.destroyed = true
+    @ccall rust_lib.destroy_write_stream(io.ptr::Ptr{Nothing})::Cint
+end
+
+function stream_error(io::WriteStream, err::String)
+    @assert Base.isopen(io)
+    io.error = err
+    @ccall rust_lib.destroy_write_stream(io.ptr::Ptr{Nothing})::Cint
+end
+
 function _unsafe_write(stream::WriteStream, input::Ptr{UInt8}, nbytes::Int; flush=false)
     if !isnothing(stream.error)
         throw(PutException("Tried to write to a stream in error state, previous error: $(stream.error)"))
@@ -1228,27 +1292,28 @@ function _unsafe_write(stream::WriteStream, input::Ptr{UInt8}, nbytes::Int; flus
         throw(PutException("Tried to write to a destroyed stream (from a previous `cancel!` or `shutdown!`)"))
     end
 
-    response_ref = Ref(WriteResponseFFI())
+    response = WriteResponseFFI()
     cond = Base.AsyncCondition()
     cond_handle = cond.handle
-    result = @ccall rust_lib.write_to_stream(
-        stream.ptr::Ptr{Cvoid},
-        input::Ptr{UInt8},
-        nbytes::Culonglong,
-        flush::Cuchar,
-        response_ref::Ref{WriteResponseFFI},
-        cond_handle::Ptr{Cvoid}
-    )::Cint
+    GC.@preserve stream response cond begin
+        result = @ccall rust_lib.write_to_stream(
+            stream.ptr::Ptr{Cvoid},
+            input::Ptr{UInt8},
+            nbytes::Culonglong,
+            flush::Cuchar,
+            response::Ref{WriteResponseFFI},
+            cond_handle::Ptr{Cvoid}
+        )::Cint
 
-    wait(cond)
+        @assert result == 0
 
-    response = response_ref[]
+        wait_or_cancel(cond, response)
+    end
+
     try
         @throw_on_error(response, "write_to_stream", PutException)
     catch e
-        stream.error = e.msg
-        @ccall rust_lib.destroy_write_stream(stream.ptr::Ptr{Nothing})::Cint
-        stream.destroyed = true
+        stream_error(stream, e.msg)
         rethrow()
     end
 
