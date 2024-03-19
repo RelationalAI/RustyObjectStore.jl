@@ -177,10 +177,7 @@ function wait_or_cancel(cond::Base.AsyncCondition, response)
     try
         return wait(cond)
     catch e
-        errormonitor(Threads.@spawn begin
-            yield()
-            @ccall rust_lib.cancel_context(response.context::Ptr{Cvoid})::Cint
-        end)
+        @ccall rust_lib.cancel_context(response.context::Ptr{Cvoid})::Cint
         ensure_wait(cond)
         @ccall rust_lib.destroy_cstring(response.error_message::Ptr{Cchar})::Cint
         rethrow()
