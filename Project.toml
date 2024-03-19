@@ -1,6 +1,6 @@
 name = "RustyObjectStore"
 uuid = "1b5eed3d-1f46-4baa-87f3-a4a892b23610"
-version = "0.5.3"
+version = "0.6.0"
 
 [deps]
 DocStringExtensions = "ffbed154-4ef7-542d-bbb7-c09d3a79fcae"
