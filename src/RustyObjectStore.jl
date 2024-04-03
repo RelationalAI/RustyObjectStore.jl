@@ -390,7 +390,8 @@ struct AzureConfig <: AbstractConfig
             params["azure_skip_signature"] = "true"
         end
 
-        cached_config = Config("az://$(container_name)/", params)
+        map!(v -> strip(v), values(params))
+        cached_config = Config("az://$(strip(container_name))/", params)
         return new(
             storage_account_name,
             container_name,
@@ -482,7 +483,8 @@ struct AWSConfig <: AbstractConfig
             error("Credentials should not be provided when using instance metadata")
         end
 
-        cached_config = Config("s3://$(bucket_name)/", params)
+        map!(v -> strip(v), values(params))
+        cached_config = Config("s3://$(strip(bucket_name))/", params)
         return new(
             region,
             bucket_name,
