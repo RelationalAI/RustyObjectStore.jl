@@ -6,7 +6,7 @@ using RustyObjectStore
 
 using Test: @testset, @test, @test_throws
 
-export run_read_write_test_cases, run_stream_test_cases
+export run_read_write_test_cases, run_stream_test_cases, run_sanity_test_cases
 
 function run_stream_test_cases(config::AbstractConfig)
     # ReadStream
@@ -516,6 +516,20 @@ function run_read_write_test_cases(read_config::AbstractConfig, write_config::Ab
     end
 
 end
+
+function run_sanity_test_cases(read_config::AbstractConfig, write_config::AbstractConfig = read_config)
+    @testset "Round trip" begin
+        input = "1,2,3,4,5,6,7,8,9,1\n"
+        buffer = Vector{UInt8}(undef, length(input))
+
+        nbytes_written = put_object(codeunits(input), "roundtrip.csv", write_config)
+        @test nbytes_written == length(input)
+
+        nbytes_read = get_object!(buffer, "roundtrip.csv", read_config)
+        @test nbytes_read == length(input)
+        @test String(buffer[1:nbytes_read]) == input
+    end
+end
 end # @testsetup
 
 @testitem "Basic BlobStorage usage" setup=[InitializeObjectStore, ReadWriteCases] begin
@@ -537,6 +551,15 @@ Azurite.with(; debug=true, public=false) do conf
 
     run_read_write_test_cases(config)
     run_stream_test_cases(config)
+
+    config_padded = AzureConfig(;
+        storage_account_name=_credentials.auth.account * "  \n",
+        container_name=_container.name * "  \n",
+        storage_account_key=_credentials.auth.key * "  \n",
+        host=base_url * "  \n"
+    )
+
+    run_sanity_test_cases(config_padded)
 end # Azurite.with
 
 end # @testitem
@@ -588,6 +611,15 @@ Minio.with(; debug=true, public=false) do conf
     run_read_write_test_cases(config)
     run_stream_test_cases(config)
 
+    config_padded = AWSConfig(;
+        region=default_region * " \n",
+        bucket_name=_container.name * " \n",
+        access_key_id=_credentials.access_key_id * " \n",
+        secret_access_key=_credentials.secret_access_key * " \n",
+        host=base_url * " \n"
+    )
+
+    run_sanity_test_cases(config_padded)
 end # Minio.with
 end # @testitem
 
