@@ -5,6 +5,7 @@ export StaticConfig, ClientOptions, Config, AzureConfig, AWSConfig
 export status_code, is_connection, is_timeout, is_early_eof, is_unknown, is_parse_url
 export get_object_stream, ReadStream, finish!
 export put_object_stream, WriteStream, cancel!, shutdown!
+export current_metrics
 
 using Base.Libc.Libdl: dlext
 using Base: @kwdef, @lock
@@ -1323,6 +1324,14 @@ function _unsafe_write(stream::WriteStream, input::Ptr{UInt8}, nbytes::Int; flus
 
     stream.bytes_written += response.length
     return Int(response.length)
+end
+
+struct Metrics
+    live_bytes::Int64
+end
+
+function current_metrics()
+    return @ccall rust_lib.current_metrics()::Metrics
 end
 
 end # module
