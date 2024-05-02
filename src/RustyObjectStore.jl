@@ -599,6 +599,7 @@ end
 function rust_message_to_reason(msg::AbstractString)
     if contains(msg, "tcp connect error: deadline has elapsed") ||
         contains(msg, "tcp connect error: Connection refused") ||
+        contains(msg, "connection error: Connection reset by peer") ||
         contains(msg, "error trying to connect: dns error")
         return ConnectionError()
     elseif contains(msg, "Client error with status")
@@ -626,7 +627,8 @@ function rust_message_to_reason(msg::AbstractString)
             return UnknownError()
         end
     elseif contains(msg, "connection closed before message completed") ||
-        contains(msg, "end of file before message length reached")
+        contains(msg, "end of file before message length reached") ||
+        contains(msg, "body from connection: Connection reset by peer")
         return EarlyEOF()
     elseif contains(msg, "timed out")
         return TimeoutError()
