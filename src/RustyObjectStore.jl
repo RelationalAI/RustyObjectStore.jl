@@ -103,7 +103,8 @@ Base.@ccallable function panic_hook_wrapper()::Cint
 end
 
 Base.@ccallable function notify_result(task::Ptr{Nothing})::Cint
-    schedule(unsafe_pointer_to_objref(task))
+    t = unsafe_pointer_to_objref(task)
+    schedule(t)
     return 0
 end
 
