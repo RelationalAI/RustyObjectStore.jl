@@ -31,7 +31,7 @@
                 @test false # Should have thrown an error
             catch err
                 @test err isa RustyObjectStore.GetException
-                @test err.msg == "failed to process get with error: Supplied buffer was too small"
+                @test occursin("Supplied buffer was too small", err.msg)
             end
         end
 
@@ -51,7 +51,7 @@
                 @test false # Should have thrown an error
             catch err
                 @test err isa RustyObjectStore.GetException
-                @test err.msg == "failed to process get with error: Supplied buffer was too small"
+                @test occursin("Supplied buffer was too small", err.msg)
             end
         end
 

@@ -73,7 +73,7 @@ end
 
 const DEFAULT_CONFIG = StaticConfig(
     n_threads=0,
-    cache_capacity=20,
+    cache_capacity=100,
     cache_ttl_secs=30 * 60,
     cache_tti_secs=5 * 60,
     multipart_put_threshold=10 * 1024 * 1024,
@@ -82,17 +82,29 @@ const DEFAULT_CONFIG = StaticConfig(
     concurrency_limit=512
 )
 
+function default_panic_hook()
+    println("Rust thread panicked, exiting the process")
+    exit(1)
+end
+
 const _OBJECT_STORE_STARTED = Ref(false)
 const _INIT_LOCK::ReentrantLock = ReentrantLock()
+_PANIC_HOOK::Function = default_panic_hook
 
 struct InitException <: Exception
     msg::String
     return_code::Cint
 end
 
-function default_panic_hook()
-    println("Rust thread panicked, exiting the process")
-    exit(1)
+Base.@ccallable function panic_hook_wrapper()::Cint
+    global _PANIC_HOOK
+    _PANIC_HOOK()
+    return 0
+end
+
+Base.@ccallable function notify_result(task::Ptr{Nothing})::Cint
+    schedule(unsafe_pointer_to_objref(task))
+    return 0
 end
 
 """
@@ -117,23 +129,15 @@ function init_object_store(
     config::StaticConfig=DEFAULT_CONFIG;
     on_rust_panic::Function=default_panic_hook
 )
+    global _PANIC_HOOK
     @lock _INIT_LOCK begin
         if _OBJECT_STORE_STARTED[]
             return nothing
         end
-        cond = Base.AsyncCondition()
-        errormonitor(Threads.@spawn begin
-            while true
-                wait(cond)
-                try
-                    on_rust_panic()
-                catch e
-                    @error "Custom panic hook failed" exception=(e, catch_backtrace())
-                end
-            end
-        end)
-        panic_cond_handle = cond.handle
-        res = @ccall rust_lib.start(config::StaticConfig, panic_cond_handle::Ptr{Cvoid})::Cint
+        _PANIC_HOOK = on_rust_panic
+        panic_fn_ptr = @cfunction(panic_hook_wrapper, Cint, ())
+        fn_ptr = @cfunction(notify_result, Cint, (Ptr{Nothing},))
+        res = @ccall rust_lib.start(config::StaticConfig, panic_fn_ptr::Ptr{Nothing}, fn_ptr::Ptr{Nothing})::Cint
         if res != 0
             throw(InitException("Failed to initialise object store runtime.", res))
         end
@@ -161,10 +165,10 @@ function throw_on_error(response, operation, exception)
     return :( $(esc(:($response.result == 1))) ? throw($exception($response_error_to_string($(esc(response)), $operation))) : $(nothing) )
 end
 
-function ensure_wait(cond::Base.AsyncCondition)
+function ensure_wait()
     for i in 1:20
         try
-            return wait(cond)
+            return wait()
         catch e
             @error "cannot skip this wait point to prevent UB, ignoring exception: $(e)"
         end
@@ -174,12 +178,12 @@ function ensure_wait(cond::Base.AsyncCondition)
     exit(1)
 end
 
-function wait_or_cancel(cond::Base.AsyncCondition, response)
+function wait_or_cancel(response)
     try
-        return wait(cond)
+        return wait()
     catch e
         @ccall rust_lib.cancel_context(response.context::Ptr{Cvoid})::Cint
-        ensure_wait(cond)
+        ensure_wait()
         @ccall rust_lib.destroy_cstring(response.error_message::Ptr{Cchar})::Cint
         rethrow()
     finally
@@ -597,10 +601,16 @@ end
 
 
 function rust_message_to_reason(msg::AbstractString)
-    if contains(msg, "tcp connect error: deadline has elapsed") ||
-        contains(msg, "tcp connect error: Connection refused") ||
-        contains(msg, "connection error: Connection reset by peer") ||
-        contains(msg, "error trying to connect: dns error")
+    if (
+        contains(msg, "connection error")
+        || contains(msg, "tcp connect error")
+        || contains(msg, "error trying to connect")
+       ) && (
+        contains(msg, "deadline has elapsed")
+        || contains(msg, "Connection refused")
+        || contains(msg, "Connection reset by peer")
+        || contains(msg, "dns error")
+       )
         return ConnectionError()
     elseif contains(msg, "Client error with status")
         m = match(r"Client error with status (\d+) ", msg)
@@ -628,7 +638,7 @@ function rust_message_to_reason(msg::AbstractString)
         end
     elseif contains(msg, "connection closed before message completed") ||
         contains(msg, "end of file before message length reached") ||
-        contains(msg, "body from connection: Connection reset by peer")
+        contains(msg, "Connection reset by peer")
         return EarlyEOF()
     elseif contains(msg, "timed out")
         return TimeoutError()
@@ -666,21 +676,21 @@ Fetches the data bytes at `path` and writes them to the given `buffer`.
 function get_object!(buffer::AbstractVector{UInt8}, path::String, conf::AbstractConfig)
     response = Response()
     size = length(buffer)
-    cond = Base.AsyncCondition()
-    cond_handle = cond.handle
+    ct = current_task()
+    handle = pointer_from_objref(ct)
     config = into_config(conf)
     while true
-        result = GC.@preserve buffer config response cond begin
+        result = GC.@preserve buffer config response ct begin
             result = @ccall rust_lib.get(
                 path::Cstring,
                 buffer::Ref{Cuchar},
                 size::Culonglong,
                 config::Ref{Config},
                 response::Ref{Response},
-                cond_handle::Ptr{Cvoid}
+                handle::Ptr{Cvoid}
             )::Cint
 
-            wait_or_cancel(cond, response)
+            wait_or_cancel(response)
 
             result
         end
@@ -721,21 +731,21 @@ Atomically writes the data bytes in `buffer` to `path`.
 function put_object(buffer::AbstractVector{UInt8}, path::String, conf::AbstractConfig)
     response = Response()
     size = length(buffer)
-    cond = Base.AsyncCondition()
-    cond_handle = cond.handle
+    ct = current_task()
+    handle = pointer_from_objref(ct)
     config = into_config(conf)
     while true
-        result = GC.@preserve buffer config response cond begin
+        result = GC.@preserve buffer config response ct begin
             result = @ccall rust_lib.put(
                 path::Cstring,
                 buffer::Ref{Cuchar},
                 size::Culonglong,
                 config::Ref{Config},
                 response::Ref{Response},
-                cond_handle::Ptr{Cvoid}
+                handle::Ptr{Cvoid}
             )::Cint
 
-            wait_or_cancel(cond, response)
+            wait_or_cancel(response)
 
             result
         end
@@ -768,19 +778,19 @@ Send a delete request to the object store.
 """
 function delete_object(path::String, conf::AbstractConfig)
     response = Response()
-    cond = Base.AsyncCondition()
-    cond_handle = cond.handle
+    ct = current_task()
+    handle = pointer_from_objref(ct)
     config = into_config(conf)
     while true
-        result = GC.@preserve config response cond begin
+        result = GC.@preserve config response ct begin
             result = @ccall rust_lib.delete(
                 path::Cstring,
                 config::Ref{Config},
                 response::Ref{Response},
-                cond_handle::Ptr{Cvoid}
+                handle::Ptr{Cvoid}
             )::Cint
 
-            wait_or_cancel(cond, response)
+            wait_or_cancel(response)
 
             result
         end
@@ -843,18 +853,18 @@ function Base.eof(io::ReadStream)
         return false
     else
         response = ReadResponseFFI()
-        cond = Base.AsyncCondition()
-        cond_handle = cond.handle
-        GC.@preserve io response cond begin
+        ct = current_task()
+        handle = pointer_from_objref(ct)
+        GC.@preserve io response ct begin
             result = @ccall rust_lib.is_end_of_stream(
                 io.ptr::Ptr{Cvoid},
                 response::Ref{ReadResponseFFI},
-                cond_handle::Ptr{Cvoid}
+                handle::Ptr{Cvoid}
             )::Cint
 
             @assert result == 0
 
-            wait_or_cancel(cond, response)
+            wait_or_cancel(response)
         end
 
         try
@@ -984,22 +994,22 @@ Send a get request to the object store returning a stream of object data.
 """
 function get_object_stream(path::String, conf::AbstractConfig; size_hint::Int=0, decompress::String="")
     response = ReadStreamResponseFFI()
-    cond = Base.AsyncCondition()
-    cond_handle = cond.handle
+    ct = current_task()
+    handle = pointer_from_objref(ct)
     config = into_config(conf)
     hint = convert(UInt64, size_hint)
     while true
-        result = GC.@preserve config response cond begin
+        result = GC.@preserve config response ct begin
             result = @ccall rust_lib.get_stream(
                 path::Cstring,
                 hint::Culonglong,
                 decompress::Cstring,
                 config::Ref{Config},
                 response::Ref{ReadStreamResponseFFI},
-                cond_handle::Ptr{Cvoid}
+                handle::Ptr{Cvoid}
             )::Cint
 
-            wait_or_cancel(cond, response)
+            wait_or_cancel(response)
 
             result
         end
@@ -1032,19 +1042,19 @@ function _unsafe_read(stream::ReadStream, dest::Ptr{UInt8}, bytes_to_read::Int)
     end
 
     response = ReadResponseFFI()
-    cond = Base.AsyncCondition()
-    cond_handle = cond.handle
-    GC.@preserve stream dest response cond begin
+    ct = current_task()
+    handle = pointer_from_objref(ct)
+    GC.@preserve stream dest response ct begin
         result = @ccall rust_lib.read_from_stream(
             stream.ptr::Ptr{Cvoid},
             dest::Ptr{UInt8},
             bytes_to_read::Culonglong,
             bytes_to_read::Culonglong,
             response::Ref{ReadResponseFFI},
-            cond_handle::Ptr{Cvoid}
+            handle::Ptr{Cvoid}
         )::Cint
 
-        wait_or_cancel(cond, response)
+        wait_or_cancel(response)
     end
 
     try
@@ -1144,20 +1154,20 @@ Send a put request to the object store returning a stream to write data into.
 """
 function put_object_stream(path::String, conf::AbstractConfig; compress::String="")
     response = WriteStreamResponseFFI()
-    cond = Base.AsyncCondition()
-    cond_handle = cond.handle
+    ct = current_task()
+    handle = pointer_from_objref(ct)
     config = into_config(conf)
     while true
-        result = GC.@preserve config response cond begin
+        result = GC.@preserve config response ct begin
             result = @ccall rust_lib.put_stream(
                 path::Cstring,
                 compress::Cstring,
                 config::Ref{Config},
                 response::Ref{WriteStreamResponseFFI},
-                cond_handle::Ptr{Cvoid}
+                handle::Ptr{Cvoid}
             )::Cint
 
-            wait_or_cancel(cond, response)
+            wait_or_cancel(response)
 
             result
         end
@@ -1224,18 +1234,18 @@ function shutdown!(stream::WriteStream)
     end
 
     response = WriteResponseFFI()
-    cond = Base.AsyncCondition()
-    cond_handle = cond.handle
-    GC.@preserve stream response cond begin
+    ct = current_task()
+    handle = pointer_from_objref(ct)
+    GC.@preserve stream response ct begin
         result = @ccall rust_lib.shutdown_write_stream(
             stream.ptr::Ptr{Cvoid},
             response::Ref{WriteResponseFFI},
-            cond_handle::Ptr{Cvoid}
+            handle::Ptr{Cvoid}
         )::Cint
 
         @assert result == 0
 
-        wait_or_cancel(cond, response)
+        wait_or_cancel(response)
     end
 
     try
@@ -1298,21 +1308,21 @@ function _unsafe_write(stream::WriteStream, input::Ptr{UInt8}, nbytes::Int; flus
     end
 
     response = WriteResponseFFI()
-    cond = Base.AsyncCondition()
-    cond_handle = cond.handle
-    GC.@preserve stream response cond begin
+    ct = current_task()
+    handle = pointer_from_objref(ct)
+    GC.@preserve stream response ct begin
         result = @ccall rust_lib.write_to_stream(
             stream.ptr::Ptr{Cvoid},
             input::Ptr{UInt8},
             nbytes::Culonglong,
             flush::Cuchar,
             response::Ref{WriteResponseFFI},
-            cond_handle::Ptr{Cvoid}
+            handle::Ptr{Cvoid}
         )::Cint
 
         @assert result == 0
 
-        wait_or_cancel(cond, response)
+        wait_or_cancel(response)
     end
 
     try
