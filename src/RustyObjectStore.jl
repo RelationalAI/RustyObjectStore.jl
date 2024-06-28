@@ -605,6 +605,7 @@ function rust_message_to_reason(msg::AbstractString)
         contains(msg, "connection error")
         || contains(msg, "tcp connect error")
         || contains(msg, "error trying to connect")
+        || contains(msg, "client error (Connect)")
        ) && (
         contains(msg, "deadline has elapsed")
         || contains(msg, "Connection refused")
