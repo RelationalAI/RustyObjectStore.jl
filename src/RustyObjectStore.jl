@@ -104,6 +104,7 @@ end
 
 Base.@ccallable function notify_result(task::Ptr{Nothing})::Cint
     t = unsafe_pointer_to_objref(task)
+    Base.unpreserve_handle(t)
     schedule(t)
     return 0
 end
@@ -683,6 +684,7 @@ function get_object!(buffer::AbstractVector{UInt8}, path::String, conf::Abstract
     config = into_config(conf)
     while true
         result = GC.@preserve buffer config response ct begin
+            Base.preserve_handle(ct)
             result = @ccall rust_lib.get(
                 path::Cstring,
                 buffer::Ref{Cuchar},
@@ -738,6 +740,7 @@ function put_object(buffer::AbstractVector{UInt8}, path::String, conf::AbstractC
     config = into_config(conf)
     while true
         result = GC.@preserve buffer config response ct begin
+            Base.preserve_handle(ct)
             result = @ccall rust_lib.put(
                 path::Cstring,
                 buffer::Ref{Cuchar},
@@ -785,6 +788,7 @@ function delete_object(path::String, conf::AbstractConfig)
     config = into_config(conf)
     while true
         result = GC.@preserve config response ct begin
+            Base.preserve_handle(ct)
             result = @ccall rust_lib.delete(
                 path::Cstring,
                 config::Ref{Config},
@@ -858,6 +862,7 @@ function Base.eof(io::ReadStream)
         ct = current_task()
         handle = pointer_from_objref(ct)
         GC.@preserve io response ct begin
+            Base.preserve_handle(ct)
             result = @ccall rust_lib.is_end_of_stream(
                 io.ptr::Ptr{Cvoid},
                 response::Ref{ReadResponseFFI},
@@ -1002,6 +1007,7 @@ function get_object_stream(path::String, conf::AbstractConfig; size_hint::Int=0,
     hint = convert(UInt64, size_hint)
     while true
         result = GC.@preserve config response ct begin
+            Base.preserve_handle(ct)
             result = @ccall rust_lib.get_stream(
                 path::Cstring,
                 hint::Culonglong,
@@ -1047,6 +1053,7 @@ function _unsafe_read(stream::ReadStream, dest::Ptr{UInt8}, bytes_to_read::Int)
     ct = current_task()
     handle = pointer_from_objref(ct)
     GC.@preserve stream dest response ct begin
+        Base.preserve_handle(ct)
         result = @ccall rust_lib.read_from_stream(
             stream.ptr::Ptr{Cvoid},
             dest::Ptr{UInt8},
@@ -1161,6 +1168,7 @@ function put_object_stream(path::String, conf::AbstractConfig; compress::String=
     config = into_config(conf)
     while true
         result = GC.@preserve config response ct begin
+            Base.preserve_handle(ct)
             result = @ccall rust_lib.put_stream(
                 path::Cstring,
                 compress::Cstring,
@@ -1239,6 +1247,7 @@ function shutdown!(stream::WriteStream)
     ct = current_task()
     handle = pointer_from_objref(ct)
     GC.@preserve stream response ct begin
+        Base.preserve_handle(ct)
         result = @ccall rust_lib.shutdown_write_stream(
             stream.ptr::Ptr{Cvoid},
             response::Ref{WriteResponseFFI},
@@ -1313,6 +1322,7 @@ function _unsafe_write(stream::WriteStream, input::Ptr{UInt8}, nbytes::Int; flus
     ct = current_task()
     handle = pointer_from_objref(ct)
     GC.@preserve stream response ct begin
+        Base.preserve_handle(ct)
         result = @ccall rust_lib.write_to_stream(
             stream.ptr::Ptr{Cvoid},
             input::Ptr{UInt8},
