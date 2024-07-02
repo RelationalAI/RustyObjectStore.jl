@@ -102,11 +102,36 @@ Base.@ccallable function panic_hook_wrapper()::Cint
     return 0
 end
 
-Base.@ccallable function notify_result(task::Ptr{Nothing})::Cint
-    t = unsafe_pointer_to_objref(task)
-    Base.unpreserve_handle(t)
-    schedule(t)
+Base.@ccallable function notify_result(event_ptr::Ptr{Nothing})::Cint
+    event = unsafe_pointer_to_objref(event_ptr)
+    notify(event)
     return 0
+end
+
+# A dict of all tasks that are waiting some result from Rust
+# and should thus not be garbage collected
+const tasks_in_flight = IdDict()
+const preserve_task_lock = Threads.SpinLock()
+function preserve_task(x::Task)
+    lock(preserve_task_lock)
+    v = get(tasks_in_flight, x, 0)::Int
+    tasks_in_flight[x] = v + 1
+    unlock(preserve_task_lock)
+    nothing
+end
+function unpreserve_task(x::Task)
+    lock(preserve_task_lock)
+    v = get(tasks_in_flight, x, 0)::Int
+    if v == 0
+        unlock(preserve_task_lock)
+        error("unbalanced call to unpreserve_task for $(typeof(x))")
+    elseif v == 1
+        pop!(tasks_in_flight, x)
+    else
+        tasks_in_flight[x] = v - 1
+    end
+    unlock(preserve_task_lock)
+    nothing
 end
 
 """
@@ -167,10 +192,10 @@ function throw_on_error(response, operation, exception)
     return :( $(esc(:($response.result == 1))) ? throw($exception($response_error_to_string($(esc(response)), $operation))) : $(nothing) )
 end
 
-function ensure_wait()
+function ensure_wait(event)
     for i in 1:20
         try
-            return wait()
+            return wait(event)
         catch e
             @error "cannot skip this wait point to prevent UB, ignoring exception: $(e)"
         end
@@ -180,12 +205,12 @@ function ensure_wait()
     exit(1)
 end
 
-function wait_or_cancel(response)
+function wait_or_cancel(event, response)
     try
-        return wait()
+        return wait(event)
     catch e
         @ccall rust_lib.cancel_context(response.context::Ptr{Cvoid})::Cint
-        ensure_wait()
+        ensure_wait(event)
         @ccall rust_lib.destroy_cstring(response.error_message::Ptr{Cchar})::Cint
         rethrow()
     finally
@@ -680,11 +705,12 @@ function get_object!(buffer::AbstractVector{UInt8}, path::String, conf::Abstract
     response = Response()
     size = length(buffer)
     ct = current_task()
-    handle = pointer_from_objref(ct)
+    event = Base.Event()
+    handle = pointer_from_objref(event)
     config = into_config(conf)
     while true
-        result = GC.@preserve buffer config response ct begin
-            Base.preserve_handle(ct)
+        preserve_task(ct)
+        result = GC.@preserve buffer config response event try
             result = @ccall rust_lib.get(
                 path::Cstring,
                 buffer::Ref{Cuchar},
@@ -694,14 +720,16 @@ function get_object!(buffer::AbstractVector{UInt8}, path::String, conf::Abstract
                 handle::Ptr{Cvoid}
             )::Cint
 
-            wait_or_cancel(response)
+            wait_or_cancel(event, response)
 
             result
+        finally
+            unpreserve_task(ct)
         end
 
         if result == 2
             # backoff
-            sleep(1.0)
+            sleep(0.01)
             continue
         end
 
@@ -736,11 +764,12 @@ function put_object(buffer::AbstractVector{UInt8}, path::String, conf::AbstractC
     response = Response()
     size = length(buffer)
     ct = current_task()
-    handle = pointer_from_objref(ct)
+    event = Base.Event()
+    handle = pointer_from_objref(event)
     config = into_config(conf)
     while true
-        result = GC.@preserve buffer config response ct begin
-            Base.preserve_handle(ct)
+        preserve_task(ct)
+        result = GC.@preserve buffer config response event try
             result = @ccall rust_lib.put(
                 path::Cstring,
                 buffer::Ref{Cuchar},
@@ -750,14 +779,16 @@ function put_object(buffer::AbstractVector{UInt8}, path::String, conf::AbstractC
                 handle::Ptr{Cvoid}
             )::Cint
 
-            wait_or_cancel(response)
+            wait_or_cancel(event, response)
 
             result
+        finally
+            unpreserve_task(ct)
         end
 
         if result == 2
             # backoff
-            sleep(1.0)
+            sleep(0.01)
             continue
         end
 
@@ -784,11 +815,12 @@ Send a delete request to the object store.
 function delete_object(path::String, conf::AbstractConfig)
     response = Response()
     ct = current_task()
-    handle = pointer_from_objref(ct)
+    event = Base.Event()
+    handle = pointer_from_objref(event)
     config = into_config(conf)
     while true
-        result = GC.@preserve config response ct begin
-            Base.preserve_handle(ct)
+        preserve_task(ct)
+        result = GC.@preserve config response event try
             result = @ccall rust_lib.delete(
                 path::Cstring,
                 config::Ref{Config},
@@ -796,14 +828,16 @@ function delete_object(path::String, conf::AbstractConfig)
                 handle::Ptr{Cvoid}
             )::Cint
 
-            wait_or_cancel(response)
+            wait_or_cancel(event, response)
 
             result
+        finally
+            unpreserve_task(ct)
         end
 
         if result == 2
             # backoff
-            sleep(1.0)
+            sleep(0.01)
             continue
         end
 
@@ -860,9 +894,10 @@ function Base.eof(io::ReadStream)
     else
         response = ReadResponseFFI()
         ct = current_task()
-        handle = pointer_from_objref(ct)
-        GC.@preserve io response ct begin
-            Base.preserve_handle(ct)
+        event = Base.Event()
+        handle = pointer_from_objref(event)
+        preserve_task(ct)
+        GC.@preserve io response event try
             result = @ccall rust_lib.is_end_of_stream(
                 io.ptr::Ptr{Cvoid},
                 response::Ref{ReadResponseFFI},
@@ -871,7 +906,9 @@ function Base.eof(io::ReadStream)
 
             @assert result == 0
 
-            wait_or_cancel(response)
+            wait_or_cancel(event, response)
+        finally
+            unpreserve_task(ct)
         end
 
         try
@@ -1002,12 +1039,13 @@ Send a get request to the object store returning a stream of object data.
 function get_object_stream(path::String, conf::AbstractConfig; size_hint::Int=0, decompress::String="")
     response = ReadStreamResponseFFI()
     ct = current_task()
-    handle = pointer_from_objref(ct)
+    event = Base.Event()
+    handle = pointer_from_objref(event)
     config = into_config(conf)
     hint = convert(UInt64, size_hint)
     while true
-        result = GC.@preserve config response ct begin
-            Base.preserve_handle(ct)
+        preserve_task(ct)
+        result = GC.@preserve config response event try
             result = @ccall rust_lib.get_stream(
                 path::Cstring,
                 hint::Culonglong,
@@ -1017,14 +1055,16 @@ function get_object_stream(path::String, conf::AbstractConfig; size_hint::Int=0,
                 handle::Ptr{Cvoid}
             )::Cint
 
-            wait_or_cancel(response)
+            wait_or_cancel(event, response)
 
             result
+        finally
+            unpreserve_task(ct)
         end
 
         if result == 2
             # backoff
-            sleep(1.0)
+            sleep(0.01)
             continue
         end
 
@@ -1051,9 +1091,10 @@ function _unsafe_read(stream::ReadStream, dest::Ptr{UInt8}, bytes_to_read::Int)
 
     response = ReadResponseFFI()
     ct = current_task()
-    handle = pointer_from_objref(ct)
-    GC.@preserve stream dest response ct begin
-        Base.preserve_handle(ct)
+    event = Base.Event()
+    handle = pointer_from_objref(event)
+    preserve_task(ct)
+    GC.@preserve stream dest response event try
         result = @ccall rust_lib.read_from_stream(
             stream.ptr::Ptr{Cvoid},
             dest::Ptr{UInt8},
@@ -1063,7 +1104,9 @@ function _unsafe_read(stream::ReadStream, dest::Ptr{UInt8}, bytes_to_read::Int)
             handle::Ptr{Cvoid}
         )::Cint
 
-        wait_or_cancel(response)
+        wait_or_cancel(event, response)
+    finally
+        unpreserve_task(ct)
     end
 
     try
@@ -1164,11 +1207,12 @@ Send a put request to the object store returning a stream to write data into.
 function put_object_stream(path::String, conf::AbstractConfig; compress::String="")
     response = WriteStreamResponseFFI()
     ct = current_task()
-    handle = pointer_from_objref(ct)
+    event = Base.Event()
+    handle = pointer_from_objref(event)
     config = into_config(conf)
     while true
-        result = GC.@preserve config response ct begin
-            Base.preserve_handle(ct)
+        preserve_task(ct)
+        result = GC.@preserve config response event try
             result = @ccall rust_lib.put_stream(
                 path::Cstring,
                 compress::Cstring,
@@ -1177,14 +1221,16 @@ function put_object_stream(path::String, conf::AbstractConfig; compress::String=
                 handle::Ptr{Cvoid}
             )::Cint
 
-            wait_or_cancel(response)
+            wait_or_cancel(event, response)
 
             result
+        finally
+            unpreserve_task(ct)
         end
 
         if result == 2
             # backoff
-            sleep(1.0)
+            sleep(0.01)
             continue
         end
 
@@ -1245,9 +1291,10 @@ function shutdown!(stream::WriteStream)
 
     response = WriteResponseFFI()
     ct = current_task()
-    handle = pointer_from_objref(ct)
-    GC.@preserve stream response ct begin
-        Base.preserve_handle(ct)
+    event = Base.Event()
+    handle = pointer_from_objref(event)
+    GC.@preserve stream response event try
+        preserve_task(ct)
         result = @ccall rust_lib.shutdown_write_stream(
             stream.ptr::Ptr{Cvoid},
             response::Ref{WriteResponseFFI},
@@ -1256,7 +1303,9 @@ function shutdown!(stream::WriteStream)
 
         @assert result == 0
 
-        wait_or_cancel(response)
+        wait_or_cancel(event, response)
+    finally
+        unpreserve_task(ct)
     end
 
     try
@@ -1320,9 +1369,10 @@ function _unsafe_write(stream::WriteStream, input::Ptr{UInt8}, nbytes::Int; flus
 
     response = WriteResponseFFI()
     ct = current_task()
-    handle = pointer_from_objref(ct)
-    GC.@preserve stream response ct begin
-        Base.preserve_handle(ct)
+    event = Base.Event()
+    handle = pointer_from_objref(event)
+    GC.@preserve stream response event try
+        preserve_task(ct)
         result = @ccall rust_lib.write_to_stream(
             stream.ptr::Ptr{Cvoid},
             input::Ptr{UInt8},
@@ -1334,7 +1384,9 @@ function _unsafe_write(stream::WriteStream, input::Ptr{UInt8}, nbytes::Int; flus
 
         @assert result == 0
 
-        wait_or_cancel(response)
+        wait_or_cancel(event, response)
+    finally
+        unpreserve_task(ct)
     end
 
     try
