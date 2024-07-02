@@ -102,6 +102,10 @@ Base.@ccallable function panic_hook_wrapper()::Cint
     return 0
 end
 
+# This is the callback that Rust calls to notify a Julia task of a completed operation.
+# The argument is transparent to Rust and is simply what gets passed from Julia in the handle
+# argument of the @ccall. Currently we pass a pointer to a Base.Event that must be notified to
+# wakeup the appropriate task.
 Base.@ccallable function notify_result(event_ptr::Ptr{Nothing})::Cint
     event = unsafe_pointer_to_objref(event_ptr)
     notify(event)
@@ -109,7 +113,8 @@ Base.@ccallable function notify_result(event_ptr::Ptr{Nothing})::Cint
 end
 
 # A dict of all tasks that are waiting some result from Rust
-# and should thus not be garbage collected
+# and should thus not be garbage collected.
+# This copies the behavior of Base.preserve_handle.
 const tasks_in_flight = IdDict()
 const preserve_task_lock = Threads.SpinLock()
 function preserve_task(x::Task)
