@@ -107,7 +107,7 @@ end
 # argument of the @ccall. Currently we pass a pointer to a Base.Event that must be notified to
 # wakeup the appropriate task.
 Base.@ccallable function notify_result(event_ptr::Ptr{Nothing})::Cint
-    event = unsafe_pointer_to_objref(event_ptr)
+    event = unsafe_pointer_to_objref(event_ptr)::Base.Event
     notify(event)
     return 0
 end
@@ -115,27 +115,26 @@ end
 # A dict of all tasks that are waiting some result from Rust
 # and should thus not be garbage collected.
 # This copies the behavior of Base.preserve_handle.
-const tasks_in_flight = IdDict()
+const tasks_in_flight = IdDict{Task, Int64}()
 const preserve_task_lock = Threads.SpinLock()
 function preserve_task(x::Task)
-    lock(preserve_task_lock)
-    v = get(tasks_in_flight, x, 0)::Int
-    tasks_in_flight[x] = v + 1
-    unlock(preserve_task_lock)
+    @lock preserve_task_lock begin
+        v = get(tasks_in_flight, x, 0)::Int
+        tasks_in_flight[x] = v + 1
+    end
     nothing
 end
 function unpreserve_task(x::Task)
-    lock(preserve_task_lock)
-    v = get(tasks_in_flight, x, 0)::Int
-    if v == 0
-        unlock(preserve_task_lock)
-        error("unbalanced call to unpreserve_task for $(typeof(x))")
-    elseif v == 1
-        pop!(tasks_in_flight, x)
-    else
-        tasks_in_flight[x] = v - 1
+    @lock preserve_task_lock begin
+        v = get(tasks_in_flight, x, 0)::Int
+        if v == 0
+            error("unbalanced call to unpreserve_task for $(typeof(x))")
+        elseif v == 1
+            pop!(tasks_in_flight, x)
+        else
+            tasks_in_flight[x] = v - 1
+        end
     end
-    unlock(preserve_task_lock)
     nothing
 end
 
@@ -197,7 +196,7 @@ function throw_on_error(response, operation, exception)
     return :( $(esc(:($response.result == 1))) ? throw($exception($response_error_to_string($(esc(response)), $operation))) : $(nothing) )
 end
 
-function ensure_wait(event)
+function ensure_wait(event::Base.Event)
     for i in 1:20
         try
             return wait(event)
@@ -210,7 +209,7 @@ function ensure_wait(event)
     exit(1)
 end
 
-function wait_or_cancel(event, response)
+function wait_or_cancel(event::Base.Event, response)
     try
         return wait(event)
     catch e
