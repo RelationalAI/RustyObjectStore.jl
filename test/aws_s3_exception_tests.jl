@@ -33,7 +33,7 @@
                 @test false # Should have thrown an error
             catch err
                 @test err isa RustyObjectStore.GetException
-                @test err.msg == "failed to process get with error: Supplied buffer was too small"
+                @test occursin("Supplied buffer was too small", err.msg)
             end
         end
 
@@ -250,6 +250,148 @@ end # @testitem
             close(http_server)
         end
         wait(http_server)
+        return nrequests[]
+    end
+
+    function dummy_cb(handle::Ptr{Cvoid})
+        return nothing
+    end
+
+    function test_tcp_reset(method)
+        @assert method === :GET || method === :PUT
+        nrequests = Ref(0)
+
+        (port, tcp_server) = Sockets.listenany(8082)
+        @async begin
+            while true
+                sock = Sockets.accept(tcp_server)
+                _ = read(sock, 4)
+                nrequests[] += 1
+                ccall(
+                    :uv_tcp_close_reset,
+                    Cint,
+                    (Ptr{Cvoid}, Ptr{Cvoid}),
+                    sock.handle, @cfunction(dummy_cb, Cvoid, (Ptr{Cvoid},))
+                )
+            end
+        end
+
+        baseurl = "http://127.0.0.1:$port"
+        conf = AWSConfig(;
+            region=region,
+            bucket_name=container,
+            access_key_id=dummy_access_key_id,
+            secret_access_key=dummy_secret_access_key,
+            host=baseurl,
+            opts=ClientOptions(;
+                max_retries=max_retries,
+                retry_timeout_secs=retry_timeout_secs
+            )
+        )
+
+        try
+            method === :GET && get_object!(zeros(UInt8, 5), "blob", conf)
+            method === :PUT && put_object(codeunits("a,b,c"), "blob", conf)
+            @test false # Should have thrown an error
+        catch e
+            method === :GET && @test e isa RustyObjectStore.GetException
+            method === :PUT && @test e isa RustyObjectStore.PutException
+            @test occursin("reset by peer", e.msg)
+            @test is_connection(e)
+        finally
+            close(tcp_server)
+        end
+        return nrequests[]
+    end
+
+    function test_get_stream_reset()
+        nrequests = Ref(0)
+
+        (port, tcp_server) = Sockets.listenany(8083)
+        http_server = HTTP.listen!(tcp_server) do http::HTTP.Stream
+            nrequests[] += 1
+            HTTP.setstatus(http, 200)
+            HTTP.setheader(http, "Content-Length" => "20")
+            HTTP.startwrite(http)
+            write(http, "not enough")
+            socket = HTTP.IOExtras.tcpsocket(HTTP.Connections.getrawstream(http))
+            ccall(
+                :uv_tcp_close_reset,
+                Cint,
+                (Ptr{Cvoid}, Ptr{Cvoid}),
+                socket.handle, @cfunction(dummy_cb, Cvoid, (Ptr{Cvoid},))
+            )
+            close(http.stream)
+        end
+
+        baseurl = "http://127.0.0.1:$port"
+        conf = AWSConfig(;
+            region=region,
+            bucket_name=container,
+            access_key_id=dummy_access_key_id,
+            secret_access_key=dummy_secret_access_key,
+            host=baseurl,
+            opts=ClientOptions(;
+                max_retries=max_retries,
+                retry_timeout_secs=retry_timeout_secs
+            )
+        )
+
+        try
+            get_object!(zeros(UInt8, 20), "blob", conf)
+            @test false # Should have thrown an error
+        catch e
+            @test e isa RustyObjectStore.GetException
+            @test occursin("Connection reset by peer", e.msg)
+            @test is_early_eof(e)
+        finally
+            Threads.@spawn HTTP.forceclose(http_server)
+        end
+        # wait(http_server)
+        return nrequests[]
+    end
+
+    function test_get_stream_timeout()
+        nrequests = Ref(0)
+
+        (port, tcp_server) = Sockets.listenany(8083)
+        http_server = HTTP.listen!(tcp_server) do http::HTTP.Stream
+            nrequests[] += 1
+            HTTP.setstatus(http, 200)
+            HTTP.setheader(http, "Content-Length" => "20")
+            HTTP.setheader(http, "Last-Modified" => "Tue, 15 Oct 2019 12:45:26 GMT")
+            HTTP.setheader(http, "ETag" => "123")
+            HTTP.startwrite(http)
+            write(http, "not enough")
+            sleep(10)
+            close(http.stream)
+        end
+
+        baseurl = "http://127.0.0.1:$port"
+        conf = AWSConfig(;
+            region=region,
+            bucket_name=container,
+            access_key_id=dummy_access_key_id,
+            secret_access_key=dummy_secret_access_key,
+            host=baseurl,
+            opts=ClientOptions(;
+                max_retries=max_retries,
+                retry_timeout_secs=retry_timeout_secs,
+                request_timeout_secs
+            )
+        )
+
+        try
+            get_object!(zeros(UInt8, 20), "blob", conf)
+            @test false # Should have thrown an error
+        catch e
+            @test e isa RustyObjectStore.GetException
+            @test occursin("operation timed out", e.msg)
+            @test is_timeout(e)
+        finally
+            Threads.@spawn HTTP.forceclose(http_server)
+        end
+        # wait(http_server)
         return nrequests[]
     end
 
@@ -534,8 +676,25 @@ end # @testitem
         @test nrequests == 1 + max_retries
     end
 
+    @testset "TCP reset" begin
+        nrequests = test_tcp_reset(:GET)
+        @test nrequests == 1 + max_retries
+        nrequests = test_tcp_reset(:PUT)
+        @test nrequests == 1 + max_retries
+    end
+
     @testset "Incomplete GET body" begin
         nrequests = test_get_stream_error()
+        @test nrequests == 1 + max_retries
+    end
+
+    @testset "Incomplete GET body reset" begin
+        nrequests = test_get_stream_reset()
+        @test nrequests == 1 + max_retries
+    end
+
+    @testset "Incomplete GET body timeout" begin
+        nrequests = test_get_stream_timeout()
         @test nrequests == 1 + max_retries
     end
 
