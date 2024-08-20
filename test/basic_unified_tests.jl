@@ -1,12 +1,12 @@
 @testsetup module ReadWriteCases
 using RustyObjectStore: get_object!, put_object, get_object_stream, put_object_stream,
-    AbstractConfig, delete_object
+    AbstractConfig, delete_object, list_objects, list_objects_stream, next_chunk!, finish!
 using CodecZlib
 using RustyObjectStore
 
 using Test: @testset, @test, @test_throws
 
-export run_read_write_test_cases, run_stream_test_cases, run_sanity_test_cases
+export run_read_write_test_cases, run_stream_test_cases, run_sanity_test_cases, run_list_test_cases
 
 function run_stream_test_cases(config::AbstractConfig)
     # ReadStream
@@ -530,6 +530,120 @@ function run_sanity_test_cases(read_config::AbstractConfig, write_config::Abstra
         @test String(buffer[1:nbytes_read]) == input
     end
 end
+
+function run_list_test_cases(config::AbstractConfig)
+    @testset "basic listing" begin
+        for i in range(10; step=10, length=5)
+            nbytes_written = put_object(codeunits(repeat('=', i)), "list/$(i).csv", config)
+            @test nbytes_written == i
+        end
+
+        entries = list_objects("list", config)
+        @test length(entries) == 5
+        @test map(x -> x.size, entries) == range(10; step=10, length=5)
+        @test map(x -> x.location, entries) == ["list/10.csv", "list/20.csv", "list/30.csv", "list/40.csv", "list/50.csv"]
+    end
+
+    @testset "basic prefix" begin
+        for i in range(10; step=10, length=5)
+            nbytes_written = put_object(codeunits(repeat('=', i)), "other/$(i).csv", config)
+            @test nbytes_written == i
+        end
+
+        for i in range(110; step=10, length=5)
+            nbytes_written = put_object(codeunits(repeat('=', i)), "other/prefix/$(i).csv", config)
+            @test nbytes_written == i
+        end
+
+        entries = list_objects("other", config)
+        @test length(entries) == 10
+
+        entries = list_objects("other/prefix", config)
+        @test length(entries) == 5
+        @test map(x -> x.size, entries) == range(110; step=10, length=5)
+        @test map(x -> x.location, entries) ==
+            ["other/prefix/110.csv", "other/prefix/120.csv", "other/prefix/130.csv", "other/prefix/140.csv", "other/prefix/150.csv"]
+
+        entries = list_objects("other/nonexistent", config)
+        @test length(entries) == 0
+
+        entries = list_objects("other/p", config)
+        @test length(entries) == 0
+    end
+
+    @testset "list empty entries" begin
+        for i in range(10; step=10, length=3)
+            nbytes_written = put_object(codeunits(""), "list_empty/$(i).csv", config)
+            @test nbytes_written == 0
+        end
+
+        entries = list_objects("list_empty", config)
+        @test length(entries) == 3
+        @test map(x -> x.size, entries) == [0, 0, 0]
+        @test map(x -> x.location, entries) == ["list_empty/10.csv", "list_empty/20.csv", "list_empty/30.csv"]
+    end
+
+    @testset "list stream" begin
+        data = range(10; step=10, length=1001)
+        for i in data
+            nbytes_written = put_object(codeunits(repeat('=', i)), "list/$(i).csv", config)
+            @test nbytes_written == i
+        end
+
+        stream = list_objects_stream("list", config)
+
+        entries = next_chunk!(stream)
+        @test length(entries) == 1000
+
+        one_entry = next_chunk!(stream)
+        @test length(one_entry) == 1
+
+        @test isnothing(next_chunk!(stream))
+
+        append!(entries, one_entry)
+
+        @test sort(map(x -> x.size, entries)) == data
+        @test sort(map(x -> x.location, entries)) == sort(map(x -> "list/$(x).csv", data))
+    end
+
+    @testset "list stream finish" begin
+        data = range(10; step=10, length=1001)
+        for i in data
+            nbytes_written = put_object(codeunits(repeat('=', i)), "list/$(i).csv", config)
+            @test nbytes_written == i
+        end
+
+        stream = list_objects_stream("list", config)
+
+        entries = next_chunk!(stream)
+        @test length(entries) == 1000
+
+        @test finish!(stream)
+
+        @test isnothing(next_chunk!(stream))
+
+        @test !finish!(stream)
+    end
+
+    @testset "list stream offset" begin
+        key(x) = "offset/$(lpad(x, 10, "0")).csv"
+        data = range(10; step=10, length=101)
+        for i in data
+            nbytes_written = put_object(codeunits(repeat('=', i)), key(i), config)
+            @test nbytes_written == i
+        end
+
+        stream = list_objects_stream("offset", config; offset=key(data[50]))
+
+        entries = next_chunk!(stream)
+        @test length(entries) == 51
+
+        @test isnothing(next_chunk!(stream))
+
+        @test sort(map(x -> x.size, entries)) == data[51:end]
+        @test sort(map(x -> x.location, entries)) == sort(map(x -> key(x), data[51:end]))
+    end
+end
 end # @testsetup
 
 @testitem "Basic BlobStorage usage" setup=[InitializeObjectStore, ReadWriteCases] begin
@@ -551,6 +665,7 @@ Azurite.with(; debug=true, public=false) do conf
 
     run_read_write_test_cases(config)
     run_stream_test_cases(config)
+    run_list_test_cases(config)
 
     config_padded = AzureConfig(;
         storage_account_name=_credentials.auth.account * "  \n",
@@ -610,6 +725,7 @@ Minio.with(; debug=true, public=false) do conf
 
     run_read_write_test_cases(config)
     run_stream_test_cases(config)
+    run_list_test_cases(config)
 
     config_padded = AWSConfig(;
         region=default_region * " \n",
