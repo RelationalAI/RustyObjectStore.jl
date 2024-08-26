@@ -569,6 +569,13 @@ struct TimeoutError <: ErrorReason end
 struct ParseURLError <: ErrorReason end
 struct UnknownError <: ErrorReason end
 
+reason_description(::ConnectionError) = "Connection"
+reason_description(r::StatusError) = "StatusCode($(r.code))"
+reason_description(::EarlyEOF) = "EarlyEOF"
+reason_description(::TimeoutError) = "Timeout"
+reason_description(::ParseURLError) = "ParseURL"
+reason_description(::UnknownError) = "Unknown"
+
 abstract type RequestException <: Exception end
 struct GetException <: RequestException
     msg::String
@@ -590,21 +597,20 @@ struct DeleteException <: RequestException
 end
 
 
-function reason(e::GetException)
-    return e.reason::ErrorReason
+message(e::GetException) = e.msg::String
+message(e::PutException) = e.msg::String
+message(e::DeleteException) = e.msg::String
+
+function message(e::Exception)
+    iobuf = IOBuffer()
+    Base.showerror(iobuf, e)
+    return String(take!(iobuf))
 end
 
-function reason(e::PutException)
-    return e.reason::ErrorReason
-end
-
-function reason(e::DeleteException)
-    return e.reason::ErrorReason
-end
-
-function reason(e::Exception)
-    return UnknownError()
-end
+reason(e::GetException) = e.reason::ErrorReason
+reason(e::PutException) = e.reason::ErrorReason
+reason(e::DeleteException) = e.reason::ErrorReason
+reason(e::Exception) = UnknownError()
 
 function status_code(e::Exception)
     return reason(e) isa StatusError ? reason(e).code : nothing
@@ -630,6 +636,28 @@ function is_unknown(e::Exception)
     return reason(e) isa UnknownError
 end
 
+function safe_message(e::Exception)
+    if e isa RequestException
+        msg = message(e)
+        r = reason(e)
+        if contains(msg, "<Error>") || contains(msg, "http")
+            # Contains unreadacted payload from backend or urls, try extracting safe information
+            code, backend_msg, report = extract_safe_parts(message(e))
+            reason_str = reason_description(r)
+
+            code = isnothing(code) ? "Unknown" : code
+            backend_msg = isnothing(backend_msg) ? "Error without safe message" : backend_msg
+            retry_report = isnothing(report) ? "" : "\n\n$(report)"
+
+            return "$(backend_msg) (code: $(code), reason: $(reason_str))$(retry_report)"
+        else
+            # Assuming it safe as it does not come from backend or has url, return message directly
+            return msg
+        end
+    else
+        return nothing
+    end
+end
 
 function rust_message_to_reason(msg::AbstractString)
     if (
@@ -680,6 +708,23 @@ function rust_message_to_reason(msg::AbstractString)
     else
         return UnknownError()
     end
+end
+
+function extract_safe_parts(msg::AbstractString)
+    code = nothing
+    backend_message = nothing
+    retry_report = nothing
+    codemsg = match(r"<Error>[\s\S]*?<Code>([\s\S]*?)</Code>[\s\S]*?<Message>([\s\S]*?)(?:</Message>|\n)", msg)
+    if !isnothing(codemsg)
+        code = codemsg.captures[1]
+        backend_message = codemsg.captures[2]
+    end
+    retry_match = match(r"Recent attempts \([\s\S]*", msg)
+    if !isnothing(retry_match)
+        retry_report = retry_match.match
+    end
+
+    return (code, backend_message, retry_report)
 end
 
 """
