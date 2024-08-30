@@ -1669,7 +1669,8 @@ end
 """
     next_chunk!(stream) -> Option{Vector{ListEntry}}
 Fetch the next chunk from a ListStream.
-An empty chunk indicates end of stream.
+If the returned entries are the last in the stream, `stream.ended` will be set to true.
+An empty chunk indicates end of stream too.
 After an error any following calls will replay the error.
 # Arguments
 - `stream::ListStream`: The stream of object metadata list chunks.
