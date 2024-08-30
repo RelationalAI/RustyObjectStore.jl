@@ -593,7 +593,7 @@ function run_list_test_cases(config::AbstractConfig)
         stream = list_objects_stream("list", config)
 
         entries = next_chunk!(stream)
-        @test length(entries) == 1000
+        @test length(entries) == max_entries_per_chunk()
 
         one_entry = next_chunk!(stream)
         @test length(one_entry) == 1
@@ -616,7 +616,7 @@ function run_list_test_cases(config::AbstractConfig)
         stream = list_objects_stream("list", config)
 
         entries = next_chunk!(stream)
-        @test length(entries) == 1000
+        @test length(entries) == max_entries_per_chunk()
 
         @test finish!(stream)
 

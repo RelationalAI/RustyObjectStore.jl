@@ -6,7 +6,7 @@ export status_code, is_connection, is_timeout, is_early_eof, is_unknown, is_pars
 export get_object_stream, ReadStream, finish!
 export put_object_stream, WriteStream, cancel!, shutdown!
 export current_metrics
-export ListEntry, list_objects, list_objects_stream, next_chunk!
+export max_entries_per_chunk, ListEntry, list_objects, list_objects_stream, next_chunk!
 
 using Base.Libc.Libdl: dlext
 using Base: @kwdef, @lock
@@ -1462,6 +1462,14 @@ end
 
 # List operations
 
+"""
+    function max_entries_per_chunk()::Int
+
+Return the maximum number of entries a listing stream chunk can hold.
+This is kept in sync manually with the Rust care for now, it should later be re-expoted.
+"""
+max_entries_per_chunk() = 1000
+
 struct ListEntryFFI
     location::Cstring
     last_modified::Culonglong
@@ -1701,13 +1709,21 @@ function next_chunk!(stream::ListStream)
     try
         @throw_on_error(response, "next_list_stream_chunk", ListException)
     catch e
-        stream_error(stream, e.msg)
+        stream_error!(stream, e.msg)
         rethrow()
     end
 
     @assert response.result == 0
 
-    entries = if response.entry_count > 0
+    # To avoid calling `next_chunk!` again on a practically ended stream, we mark
+    # the stream as ended if the response has less entries than the chunk maximum.
+    # This is safe to do because the Rust backend always fill the chunk to the maximum
+    # unless the underlying stream is drained.
+    if response.entry_count < max_entries_per_chunk()
+        stream_end!(stream)
+    end
+
+    if response.entry_count > 0
         raw_entries = unsafe_wrap(Array, response.entries, response.entry_count)
         vector = map(convert_list_entry, raw_entries)
         @ccall rust_lib.destroy_list_entries(
@@ -1716,7 +1732,6 @@ function next_chunk!(stream::ListStream)
         )::Cint
         return vector
     else
-        stream_end(stream)
         return nothing
     end
 end
