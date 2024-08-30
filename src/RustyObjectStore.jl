@@ -972,14 +972,14 @@ function Base.eof(io::ReadStream)
         try
             @throw_on_error(response, "is_end_of_stream", GetException)
         catch e
-            stream_error(io, e.msg)
+            stream_error!(io, e.msg)
             rethrow()
         end
 
         eof = response.eof > 0
 
         if eof
-            stream_end(io)
+            stream_end!(io)
         end
 
         return eof
@@ -1003,13 +1003,13 @@ Base.isopen(io::ReadStream) = !io.ended && isnothing(io.error)
 Base.iswritable(io::ReadStream) = false
 Base.filesize(io::ReadStream) = io.object_size
 
-function stream_end(io::ReadStream)
+function stream_end!(io::ReadStream)
     @assert Base.isopen(io)
     io.ended = true
     @ccall rust_lib.destroy_read_stream(io.ptr::Ptr{Nothing})::Cint
 end
 
-function stream_error(io::ReadStream, err::String)
+function stream_error!(io::ReadStream, err::String)
     @assert Base.isopen(io)
     io.error = err
     @ccall rust_lib.destroy_read_stream(io.ptr::Ptr{Nothing})::Cint
@@ -1170,7 +1170,7 @@ function _unsafe_read(stream::ReadStream, dest::Ptr{UInt8}, bytes_to_read::Int)
     try
         @throw_on_error(response, "read_from_stream", GetException)
     catch e
-        stream_error(stream, e.msg)
+        stream_error!(stream, e.msg)
         rethrow()
     end
 
@@ -1179,11 +1179,11 @@ function _unsafe_read(stream::ReadStream, dest::Ptr{UInt8}, bytes_to_read::Int)
         if response.eof == 0
             return convert(Int, response.length)
         else
-            stream_end(stream)
+            stream_end!(stream)
             return convert(Int, response.length)
         end
     else
-        stream_end(stream)
+        stream_end!(stream)
         return nothing
     end
 end
@@ -1205,7 +1205,7 @@ function finish!(stream::ReadStream)
     if !Base.isopen(stream)
         return false
     end
-    stream_end(stream)
+    stream_end!(stream)
     return true
 end
 
@@ -1369,7 +1369,7 @@ function shutdown!(stream::WriteStream)
     try
         @throw_on_error(response, "shutdown_write_stream", PutException)
     catch e
-        stream_error(stream, e.msg)
+        stream_error!(stream, e.msg)
         rethrow()
     end
 
@@ -1411,7 +1411,7 @@ function stream_destroy(io::WriteStream)
     @ccall rust_lib.destroy_write_stream(io.ptr::Ptr{Nothing})::Cint
 end
 
-function stream_error(io::WriteStream, err::String)
+function stream_error!(io::WriteStream, err::String)
     @assert Base.isopen(io)
     io.error = err
     @ccall rust_lib.destroy_write_stream(io.ptr::Ptr{Nothing})::Cint
@@ -1450,7 +1450,7 @@ function _unsafe_write(stream::WriteStream, input::Ptr{UInt8}, nbytes::Int; flus
     try
         @throw_on_error(response, "write_to_stream", PutException)
     catch e
-        stream_error(stream, e.msg)
+        stream_error!(stream, e.msg)
         rethrow()
     end
 
@@ -1598,13 +1598,13 @@ mutable struct ListStream
     error::Option{String}
 end
 
-function stream_end(stream::ListStream)
+function stream_end!(stream::ListStream)
     @assert (!stream.ended && isnothing(stream.error))
     stream.ended = true
     @ccall rust_lib.destroy_list_stream(stream.ptr::Ptr{Nothing})::Cint
 end
 
-function stream_error(stream::ListStream, err::String)
+function stream_error!(stream::ListStream, err::String)
     @assert (!stream.ended && isnothing(stream.error))
     stream.error = err
     @ccall rust_lib.destroy_list_stream(stream.ptr::Ptr{Nothing})::Cint
@@ -1750,7 +1750,7 @@ function finish!(stream::ListStream)
     if stream.ended || !isnothing(stream.error)
         return false
     end
-    stream_end(stream)
+    stream_end!(stream)
     return true
 end
 
