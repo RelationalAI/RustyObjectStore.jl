@@ -765,3 +765,35 @@ Minio.with(; debug=true, public=true) do conf
     run_read_write_test_cases(config_no_creds, config)
 end # Minio.with
 end # @testitem
+
+@testitem "Basic Snowflake Stage usage" setup=[InitializeObjectStore, SnowflakeMock, ReadWriteCases] begin
+using CloudBase.CloudTest: Minio
+using RustyObjectStore: SnowflakeConfig, ClientOptions
+
+# For interactive testing, use Minio.run() instead of Minio.with()
+# conf, p = Minio.run(; debug=true, public=false); atexit(() -> kill(p))
+Minio.with(; debug=true, public=false) do conf
+    credentials, container = conf
+    with(SFGatewayMock(credentials, container, false)) do config::SnowflakeConfig
+        run_read_write_test_cases(config)
+        run_stream_test_cases(config)
+        run_sanity_test_cases(config)
+    end
+end # Minio.with
+end # @testitem
+
+@testitem "Basic Snowflake Stage usage (encrypted)" setup=[InitializeObjectStore, SnowflakeMock, ReadWriteCases] begin
+using CloudBase.CloudTest: Minio
+using RustyObjectStore: SnowflakeConfig, ClientOptions
+
+# For interactive testing, use Minio.run() instead of Minio.with()
+# conf, p = Minio.run(; debug=true, public=false); atexit(() -> kill(p))
+Minio.with(; debug=true, public=false) do conf
+    credentials, container = conf
+    with(SFGatewayMock(credentials, container, true)) do config::SnowflakeConfig
+        run_read_write_test_cases(config)
+        run_stream_test_cases(config)
+        run_sanity_test_cases(config)
+    end
+end # Minio.with
+end # @testitem
