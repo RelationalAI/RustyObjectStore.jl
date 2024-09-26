@@ -1903,6 +1903,54 @@ function finish!(stream::ListStream)
     return true
 end
 
+mutable struct StageInfoResponseFFI
+    result::Cint
+    stage_info::Ptr{Cchar}
+    error_message::Ptr{Cchar}
+    context::Ptr{Cvoid}
+
+    StageInfoResponseFFI() = new(-1, C_NULL, C_NULL, C_NULL)
+end
+
+function current_stage_info(conf::AbstractConfig)
+    response = StageInfoResponseFFI()
+    ct = current_task()
+    event = Base.Event()
+    handle = pointer_from_objref(event)
+    config = into_config(conf)
+    while true
+        preserve_task(ct)
+        result = GC.@preserve config response event try
+            result = @ccall rust_lib.current_stage_info(
+                config::Ref{Config},
+                response::Ref{StageInfoResponseFFI},
+                handle::Ptr{Cvoid}
+            )::Cint
+
+            wait_or_cancel(event, response)
+
+            result
+        finally
+            unpreserve_task(ct)
+        end
+
+        if result == 2
+            # backoff
+            sleep(0.01)
+            continue
+        end
+
+        # No need to destroy_write_stream in case of errors here
+        @throw_on_error(response, "current_stage_info", GetException)
+
+        info_string = unsafe_string(response.stage_info)
+        @ccall rust_lib.destroy_cstring(response.stage_info::Ptr{Cchar})::Cint
+
+        stage_info = JSON3.read(info_string, Dict{String, String})
+        return stage_info
+    end
+end
+
 struct Metrics
     live_bytes::Int64
 end
