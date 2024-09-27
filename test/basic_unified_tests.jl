@@ -538,7 +538,7 @@ function run_list_test_cases(config::AbstractConfig)
             @test nbytes_written == i
         end
 
-        entries = list_objects("list", config)
+        entries = list_objects("list/", config)
         @test length(entries) == 5
         @test map(x -> x.size, entries) == range(10; step=10, length=5)
         @test map(x -> x.location, entries) == ["list/10.csv", "list/20.csv", "list/30.csv", "list/40.csv", "list/50.csv"]
@@ -555,19 +555,19 @@ function run_list_test_cases(config::AbstractConfig)
             @test nbytes_written == i
         end
 
-        entries = list_objects("other", config)
+        entries = list_objects("other/", config)
         @test length(entries) == 10
 
-        entries = list_objects("other/prefix", config)
+        entries = list_objects("other/prefix/", config)
         @test length(entries) == 5
         @test map(x -> x.size, entries) == range(110; step=10, length=5)
         @test map(x -> x.location, entries) ==
             ["other/prefix/110.csv", "other/prefix/120.csv", "other/prefix/130.csv", "other/prefix/140.csv", "other/prefix/150.csv"]
 
-        entries = list_objects("other/nonexistent", config)
+        entries = list_objects("other/nonexistent/", config)
         @test length(entries) == 0
 
-        entries = list_objects("other/p", config)
+        entries = list_objects("other/p/", config)
         @test length(entries) == 0
     end
 
@@ -577,7 +577,7 @@ function run_list_test_cases(config::AbstractConfig)
             @test nbytes_written == 0
         end
 
-        entries = list_objects("list_empty", config)
+        entries = list_objects("list_empty/", config)
         @test length(entries) == 3
         @test map(x -> x.size, entries) == [0, 0, 0]
         @test map(x -> x.location, entries) == ["list_empty/10.csv", "list_empty/20.csv", "list_empty/30.csv"]
@@ -590,7 +590,7 @@ function run_list_test_cases(config::AbstractConfig)
             @test nbytes_written == i
         end
 
-        stream = list_objects_stream("list", config)
+        stream = list_objects_stream("list/", config)
 
         entries = next_chunk!(stream)
         @test length(entries) == max_entries_per_chunk()
@@ -613,7 +613,7 @@ function run_list_test_cases(config::AbstractConfig)
             @test nbytes_written == i
         end
 
-        stream = list_objects_stream("list", config)
+        stream = list_objects_stream("list/", config)
 
         entries = next_chunk!(stream)
         @test length(entries) == max_entries_per_chunk()
@@ -633,7 +633,7 @@ function run_list_test_cases(config::AbstractConfig)
             @test nbytes_written == i
         end
 
-        stream = list_objects_stream("offset", config; offset=key(data[50]))
+        stream = list_objects_stream("offset/", config; offset=key(data[50]))
 
         entries = next_chunk!(stream)
         @test length(entries) == 51
