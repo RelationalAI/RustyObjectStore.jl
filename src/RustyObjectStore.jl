@@ -6,6 +6,7 @@ export status_code, is_connection, is_timeout, is_early_eof, is_unknown, is_pars
 export get_object_stream, ReadStream, finish!
 export put_object_stream, WriteStream, cancel!, shutdown!
 export current_metrics
+export max_entries_per_chunk, ListEntry, list_objects, list_objects_stream, next_chunk!
 
 using Base.Libc.Libdl: dlext
 using Base: @kwdef, @lock
@@ -595,10 +596,17 @@ struct DeleteException <: RequestException
 
     DeleteException(msg) = new(msg, rust_message_to_reason(msg))
 end
+struct ListException <: RequestException
+    msg::String
+    reason::ErrorReason
+
+    ListException(msg) = new(msg, rust_message_to_reason(msg))
+end
 
 
 message(e::GetException) = e.msg::String
 message(e::PutException) = e.msg::String
+message(e::ListException) = e.msg::String
 message(e::DeleteException) = e.msg::String
 
 function message(e::Exception)
@@ -609,6 +617,7 @@ end
 
 reason(e::GetException) = e.reason::ErrorReason
 reason(e::PutException) = e.reason::ErrorReason
+reason(e::ListException) = e.reason::ErrorReason
 reason(e::DeleteException) = e.reason::ErrorReason
 reason(e::Exception) = UnknownError()
 
@@ -963,14 +972,14 @@ function Base.eof(io::ReadStream)
         try
             @throw_on_error(response, "is_end_of_stream", GetException)
         catch e
-            stream_error(io, e.msg)
+            stream_error!(io, e.msg)
             rethrow()
         end
 
         eof = response.eof > 0
 
         if eof
-            stream_end(io)
+            stream_end!(io)
         end
 
         return eof
@@ -994,13 +1003,13 @@ Base.isopen(io::ReadStream) = !io.ended && isnothing(io.error)
 Base.iswritable(io::ReadStream) = false
 Base.filesize(io::ReadStream) = io.object_size
 
-function stream_end(io::ReadStream)
+function stream_end!(io::ReadStream)
     @assert Base.isopen(io)
     io.ended = true
     @ccall rust_lib.destroy_read_stream(io.ptr::Ptr{Nothing})::Cint
 end
 
-function stream_error(io::ReadStream, err::String)
+function stream_error!(io::ReadStream, err::String)
     @assert Base.isopen(io)
     io.error = err
     @ccall rust_lib.destroy_read_stream(io.ptr::Ptr{Nothing})::Cint
@@ -1161,7 +1170,7 @@ function _unsafe_read(stream::ReadStream, dest::Ptr{UInt8}, bytes_to_read::Int)
     try
         @throw_on_error(response, "read_from_stream", GetException)
     catch e
-        stream_error(stream, e.msg)
+        stream_error!(stream, e.msg)
         rethrow()
     end
 
@@ -1170,11 +1179,11 @@ function _unsafe_read(stream::ReadStream, dest::Ptr{UInt8}, bytes_to_read::Int)
         if response.eof == 0
             return convert(Int, response.length)
         else
-            stream_end(stream)
+            stream_end!(stream)
             return convert(Int, response.length)
         end
     else
-        stream_end(stream)
+        stream_end!(stream)
         return nothing
     end
 end
@@ -1196,7 +1205,7 @@ function finish!(stream::ReadStream)
     if !Base.isopen(stream)
         return false
     end
-    stream_end(stream)
+    stream_end!(stream)
     return true
 end
 
@@ -1360,7 +1369,7 @@ function shutdown!(stream::WriteStream)
     try
         @throw_on_error(response, "shutdown_write_stream", PutException)
     catch e
-        stream_error(stream, e.msg)
+        stream_error!(stream, e.msg)
         rethrow()
     end
 
@@ -1402,7 +1411,7 @@ function stream_destroy(io::WriteStream)
     @ccall rust_lib.destroy_write_stream(io.ptr::Ptr{Nothing})::Cint
 end
 
-function stream_error(io::WriteStream, err::String)
+function stream_error!(io::WriteStream, err::String)
     @assert Base.isopen(io)
     io.error = err
     @ccall rust_lib.destroy_write_stream(io.ptr::Ptr{Nothing})::Cint
@@ -1441,7 +1450,7 @@ function _unsafe_write(stream::WriteStream, input::Ptr{UInt8}, nbytes::Int; flus
     try
         @throw_on_error(response, "write_to_stream", PutException)
     catch e
-        stream_error(stream, e.msg)
+        stream_error!(stream, e.msg)
         rethrow()
     end
 
@@ -1449,6 +1458,301 @@ function _unsafe_write(stream::WriteStream, input::Ptr{UInt8}, nbytes::Int; flus
 
     stream.bytes_written += response.length
     return Int(response.length)
+end
+
+# List operations
+
+"""
+    function max_entries_per_chunk()::Int
+
+Return the maximum number of entries a listing stream chunk can hold.
+This is kept in sync manually with the Rust care for now, it should later be re-expoted.
+"""
+max_entries_per_chunk() = 1000
+
+struct ListEntryFFI
+    location::Cstring
+    last_modified::Culonglong
+    size::Culonglong
+    e_tag::Cstring
+    version::Cstring
+end
+
+struct ListEntry
+    location::String
+    last_modified::Int
+    size::Int
+    e_tag::Option{String}
+    version::Option{String}
+end
+
+function convert_list_entry(entry::ListEntryFFI)
+    return ListEntry(
+        unsafe_string(entry.location),
+        convert(Int, entry.last_modified),
+        convert(Int, entry.size),
+        entry.e_tag != C_NULL ? unsafe_string(entry.e_tag) : nothing,
+        entry.version != C_NULL ? unsafe_string(entry.version) : nothing
+    )
+end
+
+mutable struct ListResponseFFI
+    result::Cint
+    entries::Ptr{ListEntryFFI}
+    entry_count::Culonglong
+    error_message::Ptr{Cchar}
+    context::Ptr{Cvoid}
+
+    ListResponseFFI() = new(-1, C_NULL, 0, C_NULL, C_NULL)
+end
+
+"""
+    list_objects(prefix, conf; offset) -> Vector{ListEntry}
+Send a list request to the object store.
+This buffers all entries in memory. For large (or unknown) object counts use `list_objects_stream`.
+# Arguments
+- `prefix::String`: Only objects with this prefix will be returned.
+- `conf::AbstractConfig`: The configuration to use for the request.
+  It includes credentials and other client options.
+# Keyword Arguments
+- `offset::Option{String}`: (Optional) Start listing after this offset
+# Returns
+- `entries::Vector{ListEntry}`: The array with metadata for each object in the prefix.
+  Returns an empty array if no objects match.
+# Throws
+- `ListException`: If the request fails for any reason.
+"""
+function list_objects(prefix::String, conf::AbstractConfig; offset::Option{String} = nothing)
+    response = ListResponseFFI()
+    ct = current_task()
+    event = Base.Event()
+    handle = pointer_from_objref(event)
+    config = into_config(conf)
+    c_offset = if isnothing(offset)
+        C_NULL
+    else
+        offset
+    end
+    while true
+        preserve_task(ct)
+        result = GC.@preserve config response event try
+            result = @ccall rust_lib.list(
+                prefix::Cstring,
+                c_offset::Cstring,
+                config::Ref{Config},
+                response::Ref{ListResponseFFI},
+                handle::Ptr{Cvoid}
+            )::Cint
+
+            wait_or_cancel(event, response)
+
+            result
+        finally
+            unpreserve_task(ct)
+        end
+
+        if result == 2
+            # backoff
+            sleep(0.01)
+            continue
+        end
+
+        # No need to destroy_list_response in case of errors here
+        @throw_on_error(response, "list", ListException)
+
+        entries = if response.entry_count > 0
+            raw_entries = unsafe_wrap(Array, response.entries, response.entry_count)
+            vector = map(convert_list_entry, raw_entries)
+            @ccall rust_lib.destroy_list_entries(
+                response.entries::Ptr{ListEntryFFI},
+                response.entry_count::Culonglong
+            )::Cint
+            vector
+        else
+            Vector{ListEntry}[]
+        end
+
+        return entries
+    end
+end
+
+mutable struct ListStreamResponseFFI
+    result::Cint
+    stream::Ptr{Nothing}
+    error_message::Ptr{Cchar}
+    context::Ptr{Cvoid}
+
+    ListStreamResponseFFI() = new(-1, C_NULL, C_NULL, C_NULL)
+end
+
+"""
+    ListStream
+Opaque stream of metadata list chunks (Vector{ListEntry}).
+Use `next_chunk!` repeatedly to fetch data. An empty chunk indicates end of stream.
+The stream stops if an error occours, any following calls to `next_chunk!` will repeat the same error.
+It is necessary to `finish!` the stream if it is not run to completion.
+"""
+mutable struct ListStream
+    ptr::Ptr{Nothing}
+    ended::Bool
+    error::Option{String}
+end
+
+function stream_end!(stream::ListStream)
+    @assert (!stream.ended && isnothing(stream.error))
+    stream.ended = true
+    @ccall rust_lib.destroy_list_stream(stream.ptr::Ptr{Nothing})::Cint
+end
+
+function stream_error!(stream::ListStream, err::String)
+    @assert (!stream.ended && isnothing(stream.error))
+    stream.error = err
+    @ccall rust_lib.destroy_list_stream(stream.ptr::Ptr{Nothing})::Cint
+end
+
+"""
+    list_objects_stream(prefix, conf) -> ListStream
+Send a list request to the object store returning a stream of entry chunks.
+# Arguments
+- `prefix::String`: Only objects with this prefix will be returned.
+- `conf::AbstractConfig`: The configuration to use for the request.
+  It includes credentials and other client options.
+# Keyword Arguments
+- `offset::Option{String}`: (Optional) Start listing after this offset
+# Returns
+- `stream::ListStream`: The stream of object metadata chunks.
+# Throws
+- `ListException`: If the request fails for any reason.
+"""
+function list_objects_stream(prefix::String, conf::AbstractConfig; offset::Option{String} = nothing)
+    response = ListStreamResponseFFI()
+    ct = current_task()
+    event = Base.Event()
+    handle = pointer_from_objref(event)
+    config = into_config(conf)
+    c_offset = if isnothing(offset)
+        C_NULL
+    else
+        offset
+    end
+    while true
+        preserve_task(ct)
+        result = GC.@preserve config response event try
+            result = @ccall rust_lib.list_stream(
+                prefix::Cstring,
+                c_offset::Cstring,
+                config::Ref{Config},
+                response::Ref{ListStreamResponseFFI},
+                handle::Ptr{Cvoid}
+            )::Cint
+
+            wait_or_cancel(event, response)
+
+            result
+        finally
+            unpreserve_task(ct)
+        end
+
+        if result == 2
+            # backoff
+            sleep(0.01)
+            continue
+        end
+
+        # No need to destroy_list_stream in case of errors here
+        @throw_on_error(response, "list_stream", ListException)
+
+        return ListStream(response.stream, false, nothing)
+    end
+end
+
+"""
+    next_chunk!(stream) -> Option{Vector{ListEntry}}
+Fetch the next chunk from a ListStream.
+If the returned entries are the last in the stream, `stream.ended` will be set to true.
+An empty chunk indicates end of stream too.
+After an error any following calls will replay the error.
+# Arguments
+- `stream::ListStream`: The stream of object metadata list chunks.
+# Returns
+- `entries::Vector{ListEntry}`: The array with metadata for each object in the prefix.
+  Resturns and empty array if no objects match or the stream is over.
+# Throws
+- `ListException`: If the request fails for any reason.
+"""
+function next_chunk!(stream::ListStream)
+    if !isnothing(stream.error)
+        throw(PutException("Tried to fetch next chunk from a stream in error state, previous error: $(stream.error)"))
+    end
+    if stream.ended
+        return nothing
+    end
+
+    response = ListResponseFFI()
+    ct = current_task()
+    event = Base.Event()
+    handle = pointer_from_objref(event)
+    GC.@preserve stream response event try
+        preserve_task(ct)
+        result = @ccall rust_lib.next_list_stream_chunk(
+            stream.ptr::Ptr{Cvoid},
+            response::Ref{ListResponseFFI},
+            handle::Ptr{Cvoid}
+        )::Cint
+
+        @assert result == 0
+
+        wait_or_cancel(event, response)
+    finally
+        unpreserve_task(ct)
+    end
+
+    try
+        @throw_on_error(response, "next_list_stream_chunk", ListException)
+    catch e
+        stream_error!(stream, e.msg)
+        rethrow()
+    end
+
+    @assert response.result == 0
+
+    # To avoid calling `next_chunk!` again on a practically ended stream, we mark
+    # the stream as ended if the response has less entries than the chunk maximum.
+    # This is safe to do because the Rust backend always fill the chunk to the maximum
+    # unless the underlying stream is drained.
+    if response.entry_count < max_entries_per_chunk()
+        stream_end!(stream)
+    end
+
+    if response.entry_count > 0
+        raw_entries = unsafe_wrap(Array, response.entries, response.entry_count)
+        vector = map(convert_list_entry, raw_entries)
+        @ccall rust_lib.destroy_list_entries(
+            response.entries::Ptr{ListEntryFFI},
+            response.entry_count::Culonglong
+        )::Cint
+        return vector
+    else
+        return nothing
+    end
+end
+
+
+"""
+    finish!(stream) -> Bool
+Finishes the stream reclaiming resources.
+This function is not thread-safe.
+# Arguments
+- `stream::ListStream`: The stream of object metadata list chunks.
+# Returns
+- `was_running::Bool`: Indicates if the stream was running when `finish!` was called.
+"""
+function finish!(stream::ListStream)
+    if stream.ended || !isnothing(stream.error)
+        return false
+    end
+    stream_end!(stream)
+    return true
 end
 
 struct Metrics
