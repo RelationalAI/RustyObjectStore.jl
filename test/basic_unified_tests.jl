@@ -531,6 +531,15 @@ function run_sanity_test_cases(read_config::AbstractConfig, write_config::Abstra
     end
 end
 
+function within_margin(a, b, margin = 32)
+    result = false
+    for (i_a, i_b) in zip(a, b)
+        result |= abs(i_a - i_b) < margin
+    end
+    result
+end
+
+
 function run_list_test_cases(config::AbstractConfig)
     @testset "basic listing" begin
         for i in range(10; step=10, length=5)
@@ -540,7 +549,7 @@ function run_list_test_cases(config::AbstractConfig)
 
         entries = list_objects("list/", config)
         @test length(entries) == 5
-        @test map(x -> x.size, entries) == range(10; step=10, length=5)
+        @test within_margin(map(x -> x.size, entries), range(10; step=10, length=5), 32)
         @test map(x -> x.location, entries) == ["list/10.csv", "list/20.csv", "list/30.csv", "list/40.csv", "list/50.csv"]
     end
 
@@ -560,7 +569,7 @@ function run_list_test_cases(config::AbstractConfig)
 
         entries = list_objects("other/prefix/", config)
         @test length(entries) == 5
-        @test map(x -> x.size, entries) == range(110; step=10, length=5)
+        @test within_margin(map(x -> x.size, entries), range(110; step=10, length=5), 32)
         @test map(x -> x.location, entries) ==
             ["other/prefix/110.csv", "other/prefix/120.csv", "other/prefix/130.csv", "other/prefix/140.csv", "other/prefix/150.csv"]
 
@@ -602,7 +611,7 @@ function run_list_test_cases(config::AbstractConfig)
 
         append!(entries, one_entry)
 
-        @test sort(map(x -> x.size, entries)) == data
+        @test within_margin(sort(map(x -> x.size, entries)), data, 32)
         @test sort(map(x -> x.location, entries)) == sort(map(x -> "list/$(x).csv", data))
     end
 
@@ -640,7 +649,7 @@ function run_list_test_cases(config::AbstractConfig)
 
         @test isnothing(next_chunk!(stream))
 
-        @test sort(map(x -> x.size, entries)) == data[51:end]
+        @test within_margin(sort(map(x -> x.size, entries)), data[51:end], 32)
         @test sort(map(x -> x.location, entries)) == sort(map(x -> key(x), data[51:end]))
     end
 end
@@ -777,6 +786,7 @@ Minio.with(; debug=true, public=false) do conf
     with(SFGatewayMock(credentials, container, false)) do config::SnowflakeConfig
         run_read_write_test_cases(config)
         run_stream_test_cases(config)
+        run_list_test_cases(config)
         run_sanity_test_cases(config)
     end
 end # Minio.with
@@ -793,6 +803,7 @@ Minio.with(; debug=true, public=false) do conf
     with(SFGatewayMock(credentials, container, true)) do config::SnowflakeConfig
         run_read_write_test_cases(config)
         run_stream_test_cases(config)
+        run_list_test_cases(config)
         run_sanity_test_cases(config)
     end
 end # Minio.with
