@@ -1,14 +1,20 @@
 using CloudBase: CloudCredentials, AWSCredentials, AbstractStore, AWS
 using JSON3, HTTP, Sockets, Base64
 using RustyObjectStore: SnowflakeConfig, ClientOptions
+using Base: UUID
 
 export SFGatewayMock, start, with
 
 struct SFConfig
     account::String
     database::String
+    default_schema::String
+end
+
+struct Stage
+    database::String
     schema::String
-    stage::String
+    name::String
 end
 
 mutable struct SFGatewayMock
@@ -16,25 +22,51 @@ mutable struct SFGatewayMock
     store::AbstractStore
     opts::ClientOptions
     config::SFConfig
+    allowed_stages::Vector{Stage}
     encrypted::Bool
     keys_lock::ReentrantLock
     next_key_id::Int
     keys::Dict{String, String}
 end
 
-function SFGatewayMock(credentials::CloudCredentials, store::AbstractStore, encrypted::Bool; opts=ClientOptions())
-    stage_name = "teststage" * string(rand(UInt64), base=16)
+
+function to_stage(stage::AbstractString, config::SFConfig)
+    parts = split(stage, ".")
+    if length(parts) == 1
+        return Stage(uppercase(config.database), uppercase(config.default_schema), uppercase(parts[1]))
+    elseif length(parts) == 2
+        return Stage(uppercase(config.database), uppercase(parts[1]), uppercase(parts[2]))
+    elseif length(parts) == 3
+        return Stage(uppercase(parts[1]), uppercase(parts[2]), uppercase(parts[3]))
+    else
+        error("Invalid stage spec")
+    end
+end
+
+fqsn(s::Stage) = "$(s.database).$(s.schema).$(s.name)"
+stage_uuid(s::Stage) = UUID((hash(fqsn(s)), hash(fqsn(s))))
+stage_path(s::Stage) = "stages/$(stage_uuid(s))/"
+
+function SFGatewayMock(
+        credentials::CloudCredentials,
+        store::AbstractStore,
+        encrypted::Bool;
+        opts=ClientOptions(),
+        default_schema::String="testschema",
+        allowed_stages::Vector{String}=["teststage" * string(rand(UInt64), base=16)]
+    )
     config = SFConfig(
         "testaccount",
         "testdatabase",
-        "testschema",
-        stage_name
+        default_schema
     )
+    allowed_stages_parsed = map(s -> to_stage(s, config), allowed_stages)
     SFGatewayMock(
         credentials,
         store,
         opts,
         config,
+        allowed_stages_parsed,
         encrypted,
         ReentrantLock(),
         1,
@@ -160,9 +192,13 @@ function start(gw::SFGatewayMock)
                     return error_json_response("Missing stage name or file path")
                 end
 
-                stage_name = m.captures[1]
+                stage = try
+                    to_stage(m.captures[1], gw.config)
+                catch e
+                    return error_json_response("$(e)")
+                end
 
-                if stage_name != gw.config.stage
+                if !(stage in gw.allowed_stages)
                     return error_json_response("Stage not found")
                 end
 
@@ -179,9 +215,8 @@ function start(gw::SFGatewayMock)
                 end
 
 
-                stage_path = "stages/a6688b33-acb4-44ed-bd46-30ff12238c2a/"
                 stage_info = if isa(gw.credentials, AWSCredentials) && isa(gw.store, AWS.Bucket)
-                    construct_stage_info(gw.credentials, gw.store, stage_path, gw.encrypted)
+                    construct_stage_info(gw.credentials, gw.store, stage_path(stage), gw.encrypted)
                 else
                     error("unimplemented")
                 end
@@ -203,16 +238,20 @@ function start(gw::SFGatewayMock)
                     return error_json_response("Missing stage name or file path")
                 end
 
-                stage_name = m.captures[1]
-                path = m.captures[2]
+                stage = try
+                    to_stage(m.captures[1], gw.config)
+                catch e
+                    return error_json_response("$(e)")
+                end
 
-                if stage_name != gw.config.stage
+                if !(stage in gw.allowed_stages)
                     return error_json_response("Stage not found")
                 end
 
-                stage_path = "stages/a6688b33-acb4-44ed-bd46-30ff12238c2a/"
+                path = m.captures[2]
+
                 stage_info = if isa(gw.credentials, AWSCredentials) && isa(gw.store, AWS.Bucket)
-                    construct_stage_info(gw.credentials, gw.store, stage_path, gw.encrypted)
+                    construct_stage_info(gw.credentials, gw.store, stage_path(stage), gw.encrypted)
                 else
                     error("unimplemented")
                 end
@@ -257,10 +296,10 @@ function start(gw::SFGatewayMock)
     master_path, fileio = mktemp()
     write(fileio, "dummy-file-master-token")
     sfconfig = SnowflakeConfig(
-        stage=gw.config.stage,
+        stage=fqsn(gw.allowed_stages[1]),
         account=gw.config.account,
         database=gw.config.database,
-        schema=gw.config.schema,
+        schema=gw.allowed_stages[1].schema,
         endpoint="http://127.0.0.1:$(port)",
         master_token_path=master_path,
         opts=gw.opts
