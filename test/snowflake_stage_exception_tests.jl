@@ -118,6 +118,8 @@ end # @testitem
     retry_timeout_secs = 10
     request_timeout_secs = 1
 
+    # Starts a TCP server that will accept the connection and start reading a few
+    # bytes before closing the connection.
     function test_tcp_error(method)
         @assert method === :GET || method === :PUT
         nrequests = Ref(0)
@@ -155,6 +157,8 @@ end # @testitem
         return nrequests[]
     end
 
+    # Starts an HTTP server that will respond with the headers for a GET response
+    # and will write a partial body before closing the connection.
     function test_get_stream_error()
         nrequests = Ref(0)
 
@@ -194,6 +198,8 @@ end # @testitem
         return nothing
     end
 
+    # Starts a TCP server that will accept the connection and start reading a few
+    # bytes before forcing a TCP reset on the connection.
     function test_tcp_reset(method)
         @assert method === :GET || method === :PUT
         nrequests = Ref(0)
@@ -236,6 +242,8 @@ end # @testitem
         return nrequests[]
     end
 
+    # Starts an HTTP server that will respond with the headers for a GET response
+    # and will write a partial body before forcing a TCP reset on the connection.
     function test_get_stream_reset()
         nrequests = Ref(0)
 
@@ -278,6 +286,8 @@ end # @testitem
         return nrequests[]
     end
 
+    # Starts an HTTP server that will respond with the headers for a GET response
+    # and will write a partial body before sleeping until the client times out.
     function test_get_stream_timeout()
         nrequests = Ref(0)
 
@@ -317,6 +327,9 @@ end # @testitem
         return nrequests[]
     end
 
+    # Starts an HTTP server that will respond with the provided status code
+    # when receiving a request for the provided method, it optionally returns
+    # the provided headers in the response
     function test_status(method, response_status, headers=nothing)
         @assert method === :GET || method === :PUT
         nrequests = Ref(0)
@@ -358,6 +371,7 @@ end # @testitem
         return nrequests[]
     end
 
+    # Starts an HTTP server that upon receiving the request sleeps until the client times out.
     function test_timeout(method, message, wait_secs::Int = 60)
         @assert method === :GET || method === :PUT
         nrequests = Ref(0)
@@ -401,6 +415,8 @@ end # @testitem
         return nrequests[]
     end
 
+    # Starts an HTTP server that upon receiving the request sleeps for 5 seconds to allow
+    # for the client to simulate a cancellation.
     function test_cancellation()
         nrequests = Ref(0)
         response_body = "response body from the dummy server"

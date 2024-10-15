@@ -657,6 +657,7 @@ struct SnowflakeConfig <: AbstractConfig
             params["snowflake_keyring_ttl_secs"] = string(keyring_ttl_secs)
         end
 
+        # All defaults for the optional values are defined on the Rust side.
         map!(v -> strip(v), values(params))
         cached_config = Config("snowflake://$(strip(stage))/", params)
         return new(
@@ -693,6 +694,7 @@ function Base.show(io::IO, conf::SnowflakeConfig)
     @option_print(conf, username)
     @option_print(conf, password, true)
     @option_print(conf, role)
+    @option_print(conf, master_token_path)
     @option_print(conf, keyring_capacity)
     @option_print(conf, keyring_ttl_secs)
     print(io, ", ", "opts=", repr(conf.opts), ")")
@@ -1940,7 +1942,7 @@ function current_stage_info(conf::AbstractConfig)
             continue
         end
 
-        # No need to destroy_write_stream in case of errors here
+        # No need to destroy_cstring(response.stage_info) in case of errors here
         @throw_on_error(response, "current_stage_info", GetException)
 
         info_string = unsafe_string(response.stage_info)

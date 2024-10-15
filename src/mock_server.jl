@@ -103,6 +103,9 @@ function find_key_by_id(gw::SFGatewayMock, id::String)
     end
 end
 
+# Returns a SnowflakeConfig and a server instance.
+# The config can be used to perform operations against
+# a simulated Snowflake stage backed by a Minio instance.
 function start(gw::SFGatewayMock)
     (port, tcp_server) = Sockets.listenany(8080)
     http_server = HTTP.serve!(tcp_server) do request::HTTP.Request
