@@ -578,6 +578,10 @@ function run_list_test_cases(config::AbstractConfig)
 
         entries = list_objects("other/p/", config)
         @test length(entries) == 0
+
+        entries = list_objects("other/prefix/150.csv", config)
+        @test length(entries) == 1
+        @test map(x -> x.location, entries) == ["other/prefix/150.csv"]
     end
 
     @testset "list empty entries" begin

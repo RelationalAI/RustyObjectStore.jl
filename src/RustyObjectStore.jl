@@ -1959,4 +1959,8 @@ function current_metrics()
     return @ccall rust_lib.current_metrics()::Metrics
 end
 
-end # module
+module Test
+include("mock_server.jl")
+end # Test module
+
+end # RustyObjectStore module
