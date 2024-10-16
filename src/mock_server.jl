@@ -98,7 +98,6 @@ function construct_stage_info(credentials::AWSCredentials, store::AWS.Bucket, pa
     m = match(r"(https?://.*?)/", store.baseurl)
     @assert !isnothing(m)
     test_endpoint = m.captures[1]
-    @show test_endpoint
 
     Dict(
         "locationType" => "S3",
