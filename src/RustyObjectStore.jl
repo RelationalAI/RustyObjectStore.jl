@@ -5,7 +5,7 @@ export StaticConfig, ClientOptions, Config, AzureConfig, AWSConfig, SnowflakeCon
 export status_code, is_connection, is_timeout, is_early_eof, is_unknown, is_parse_url
 export get_object_stream, ReadStream, finish!
 export put_object_stream, WriteStream, cancel!, shutdown!
-export current_metrics
+export current_metrics, invalidate_config
 export max_entries_per_chunk, ListEntry, list_objects, list_objects_stream, next_chunk!
 
 using Base.Libc.Libdl: dlext
@@ -1950,6 +1950,57 @@ function current_stage_info(conf::AbstractConfig)
 
         stage_info = JSON3.read(info_string, Dict{String, String})
         return stage_info
+    end
+end
+
+"""
+    invalidate_config(conf::Option{AbstractConfig}) -> Bool
+
+Invalidates the specified config (or all if no config is provided) in the Rust
+config cache. This is useful to mitigate test interference.
+
+# Arguments
+- `conf::AbstractConfig`: (Optional) The config to be invalidated.
+"""
+function invalidate_config(conf::Option{AbstractConfig}=nothing)
+    response = Response()
+    ct = current_task()
+    event = Base.Event()
+    handle = pointer_from_objref(event)
+    while true
+        preserve_task(ct)
+        result = GC.@preserve conf response event try
+            result = if !isnothing(conf)
+                config = into_config(conf)
+                @ccall rust_lib.invalidate_config(
+                    config::Ref{Config},
+                    response::Ref{Response},
+                    handle::Ptr{Cvoid}
+                )::Cint
+            else
+                @ccall rust_lib.invalidate_config(
+                    C_NULL::Ptr{Cvoid},
+                    response::Ref{Response},
+                    handle::Ptr{Cvoid}
+                )::Cint
+            end
+
+            wait_or_cancel(event, response)
+
+            result
+        finally
+            unpreserve_task(ct)
+        end
+
+        if result == 2
+            # backoff
+            sleep(0.01)
+            continue
+        end
+
+        @throw_on_error(response, "invalidate_config", PutException)
+
+        return true
     end
 end
 
