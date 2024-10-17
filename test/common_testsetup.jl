@@ -12,3 +12,9 @@
     )
     init_object_store(test_config)
 end
+
+@testsetup module SnowflakeMock
+    using RustyObjectStore.Test: SFGatewayMock, start, with
+
+    export SFGatewayMock, start, with
+end

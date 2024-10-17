@@ -1,11 +1,11 @@
 module RustyObjectStore
 
 export init_object_store, get_object!, put_object, delete_object
-export StaticConfig, ClientOptions, Config, AzureConfig, AWSConfig
+export StaticConfig, ClientOptions, Config, AzureConfig, AWSConfig, SnowflakeConfig
 export status_code, is_connection, is_timeout, is_early_eof, is_unknown, is_parse_url
 export get_object_stream, ReadStream, finish!
 export put_object_stream, WriteStream, cancel!, shutdown!
-export current_metrics
+export current_metrics, invalidate_config
 export max_entries_per_chunk, ListEntry, list_objects, list_objects_stream, next_chunk!
 
 using Base.Libc.Libdl: dlext
@@ -547,6 +547,156 @@ function Base.show(io::IO, conf::AWSConfig)
     @option_print(conf, session_token, true)
     conf.use_instance_metadata && print(io, "use_instance_metadata=", repr(conf.use_instance_metadata))
     @option_print(conf, host)
+    print(io, ", ", "opts=", repr(conf.opts), ")")
+end
+
+"""
+    $TYPEDEF
+
+Configuration for the Snowflake stage object store backend.
+
+It is recommended to reuse an instance for many operations.
+
+# Keyword Arguments
+- `stage::String`: Snowflake stage
+- `encryption_scheme::Option{String}`: (Optional) Encryption scheme to enforce (one of AES_128_CBC, AES_256_GCM)
+- `account::Option{String}`: (Optional) Snowflake account (read from SNOWFLAKE_ACCOUNT env var if missing)
+- `database::Option{String}`: (Optional) Snwoflake database (read from SNOWFLAKE_DATABASE env var if missing)
+- `schema::Option{String}`: (Optional) Snowflake schema (read from SNOWFLAKE_SCHEMA env var if missing)
+- `endpoint::Option{String}`: (Optional) Snowflake endpoint (read from SNOWFLAKE_ENDPOINT or SNOWFLAKE_HOST env vars if missing)
+- `warehouse::Option{String}`: (Optional) Snowflake warehouse
+- `username::Option{String}`: (Optional) Snowflake username (required for user/pass flow)
+- `password::Option{String}`: (Optional) Snowflake password (required for user/pass flow)
+- `role::Option{String}`: (Optional) Snowflake role (required for user/pass flow)
+- `master_token_path::Option{String}`: (Optional) Path to Snowflake master token (read from MASTER_TOKEN_PATH or defaults to `/snowflake/session/token` if missing)
+- `keyring_capacity::Option{Int}`: (Optional) Maximum number of keys to be kept in the in-memory keyring (key cache)
+- `keyring_ttl_secs::Option{Int}`: (Optional) Duration in seconds after which a key is removed from the keyring
+- `opts::ClientOptions`: (Optional) Client configuration options.
+"""
+struct SnowflakeConfig <: AbstractConfig
+    stage::String
+    encryption_scheme::Option{String}
+    account::Option{String}
+    database::Option{String}
+    schema::Option{String}
+    endpoint::Option{String}
+    warehouse::Option{String}
+    username::Option{String}
+    password::Option{String}
+    role::Option{String}
+    master_token_path::Option{String}
+    keyring_capacity::Option{Int}
+    keyring_ttl_secs::Option{Int}
+    opts::ClientOptions
+    cached_config::Config
+    function SnowflakeConfig(;
+        stage::String,
+        encryption_scheme::Option{String} = nothing,
+        account::Option{String} = nothing,
+        database::Option{String} = nothing,
+        schema::Option{String} = nothing,
+        endpoint::Option{String} = nothing,
+        warehouse::Option{String} = nothing,
+        username::Option{String} = nothing,
+        password::Option{String} = nothing,
+        role::Option{String} = nothing,
+        master_token_path::Option{String} = nothing,
+        keyring_capacity::Option{Int} = nothing,
+        keyring_ttl_secs::Option{Int} = nothing,
+        opts::ClientOptions = ClientOptions()
+    )
+        params = copy(opts.params)
+
+        params["snowflake_stage"] = stage
+
+        if !isnothing(encryption_scheme)
+            params["snowflake_encryption_scheme"] = encryption_scheme
+        end
+
+        if !isnothing(account)
+            params["snowflake_account"] = account
+        end
+
+        if !isnothing(database)
+            params["snowflake_database"] = database
+        end
+
+        if !isnothing(schema)
+            params["snowflake_schema"] = schema
+        end
+
+        if !isnothing(endpoint)
+            params["snowflake_endpoint"] = endpoint
+        end
+
+        if !isnothing(warehouse)
+            params["snowflake_warehouse"] = warehouse
+        end
+
+        if !isnothing(username)
+            params["snowflake_username"] = username
+        end
+
+        if !isnothing(password)
+            params["snowflake_password"] = password
+        end
+
+        if !isnothing(role)
+            params["snowflake_role"] = role
+        end
+
+        if !isnothing(master_token_path)
+            params["snowflake_master_token_path"] = master_token_path
+        end
+
+        if !isnothing(keyring_capacity)
+            params["snowflake_keyring_capacity"] = string(keyring_capacity)
+        end
+
+        if !isnothing(keyring_ttl_secs)
+            params["snowflake_keyring_ttl_secs"] = string(keyring_ttl_secs)
+        end
+
+        # All defaults for the optional values are defined on the Rust side.
+        map!(v -> strip(v), values(params))
+        cached_config = Config("snowflake://$(strip(stage))/", params)
+        return new(
+            stage,
+            encryption_scheme,
+            account,
+            database,
+            schema,
+            endpoint,
+            warehouse,
+            username,
+            password,
+            role,
+            master_token_path,
+            keyring_capacity,
+            keyring_ttl_secs,
+            opts,
+            cached_config
+        )
+    end
+end
+
+into_config(conf::SnowflakeConfig) = conf.cached_config
+
+function Base.show(io::IO, conf::SnowflakeConfig)
+    print(io, "SnowflakeConfig("),
+    print(io, "stage=", repr(conf.stage))
+    @option_print(conf, encryption_scheme)
+    @option_print(conf, account)
+    @option_print(conf, database)
+    @option_print(conf, schema)
+    @option_print(conf, endpoint)
+    @option_print(conf, warehouse)
+    @option_print(conf, username)
+    @option_print(conf, password, true)
+    @option_print(conf, role)
+    @option_print(conf, master_token_path)
+    @option_print(conf, keyring_capacity)
+    @option_print(conf, keyring_ttl_secs)
     print(io, ", ", "opts=", repr(conf.opts), ")")
 end
 
@@ -1755,6 +1905,105 @@ function finish!(stream::ListStream)
     return true
 end
 
+mutable struct StageInfoResponseFFI
+    result::Cint
+    stage_info::Ptr{Cchar}
+    error_message::Ptr{Cchar}
+    context::Ptr{Cvoid}
+
+    StageInfoResponseFFI() = new(-1, C_NULL, C_NULL, C_NULL)
+end
+
+function current_stage_info(conf::AbstractConfig)
+    response = StageInfoResponseFFI()
+    ct = current_task()
+    event = Base.Event()
+    handle = pointer_from_objref(event)
+    config = into_config(conf)
+    while true
+        preserve_task(ct)
+        result = GC.@preserve config response event try
+            result = @ccall rust_lib.current_stage_info(
+                config::Ref{Config},
+                response::Ref{StageInfoResponseFFI},
+                handle::Ptr{Cvoid}
+            )::Cint
+
+            wait_or_cancel(event, response)
+
+            result
+        finally
+            unpreserve_task(ct)
+        end
+
+        if result == 2
+            # backoff
+            sleep(0.01)
+            continue
+        end
+
+        # No need to destroy_cstring(response.stage_info) in case of errors here
+        @throw_on_error(response, "current_stage_info", GetException)
+
+        info_string = unsafe_string(response.stage_info)
+        @ccall rust_lib.destroy_cstring(response.stage_info::Ptr{Cchar})::Cint
+
+        stage_info = JSON3.read(info_string, Dict{String, String})
+        return stage_info
+    end
+end
+
+"""
+    invalidate_config(conf::Option{AbstractConfig}) -> Bool
+
+Invalidates the specified config (or all if no config is provided) in the Rust
+config cache. This is useful to mitigate test interference.
+
+# Arguments
+- `conf::AbstractConfig`: (Optional) The config to be invalidated.
+"""
+function invalidate_config(conf::Option{AbstractConfig}=nothing)
+    response = Response()
+    ct = current_task()
+    event = Base.Event()
+    handle = pointer_from_objref(event)
+    while true
+        preserve_task(ct)
+        result = GC.@preserve conf response event try
+            result = if !isnothing(conf)
+                config = into_config(conf)
+                @ccall rust_lib.invalidate_config(
+                    config::Ref{Config},
+                    response::Ref{Response},
+                    handle::Ptr{Cvoid}
+                )::Cint
+            else
+                @ccall rust_lib.invalidate_config(
+                    C_NULL::Ptr{Cvoid},
+                    response::Ref{Response},
+                    handle::Ptr{Cvoid}
+                )::Cint
+            end
+
+            wait_or_cancel(event, response)
+
+            result
+        finally
+            unpreserve_task(ct)
+        end
+
+        if result == 2
+            # backoff
+            sleep(0.01)
+            continue
+        end
+
+        @throw_on_error(response, "invalidate_config", PutException)
+
+        return true
+    end
+end
+
 struct Metrics
     live_bytes::Int64
 end
@@ -1763,4 +2012,8 @@ function current_metrics()
     return @ccall rust_lib.current_metrics()::Metrics
 end
 
-end # module
+module Test
+include("mock_server.jl")
+end # Test module
+
+end # RustyObjectStore module
