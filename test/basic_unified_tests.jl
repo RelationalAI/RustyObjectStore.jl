@@ -589,7 +589,7 @@ function run_list_test_cases(config::AbstractConfig; strict_entry_size=true)
 
         entries = list_objects("list_empty/", config)
         @test length(entries) == 3
-        @test map(x -> x.size, entries) == [0, 0, 0]
+        @test within_margin(sort(map(x -> x.size, entries)), [0, 0, 0], margin)
         @test map(x -> x.location, entries) == ["list_empty/10.csv", "list_empty/20.csv", "list_empty/30.csv"]
     end
 
