@@ -799,8 +799,8 @@ function safe_message(e::Exception)
     if e isa RequestException
         msg = message(e)
         r = reason(e)
-        if contains(msg, "<Error>") || contains(msg, "http")
-            # Contains unreadacted payload from backend or urls, try extracting safe information
+        if contains(msg, "<Error>")
+            # Contains unreadacted payload from backend, try extracting safe information
             code, backend_msg, report = extract_safe_parts(message(e))
             reason_str = reason_description(r)
 
@@ -809,6 +809,9 @@ function safe_message(e::Exception)
             retry_report = isnothing(report) ? "" : "\n\n$(report)"
 
             return "$(backend_msg) (code: $(code), reason: $(reason_str))$(retry_report)"
+        elseif contains(msg, "http")
+            # Contains urls, redact them
+            return replace(msg, r"https?://[^\n )]+" => "<redacted url>")
         else
             # Assuming it safe as it does not come from backend or has url, return message directly
             return msg
