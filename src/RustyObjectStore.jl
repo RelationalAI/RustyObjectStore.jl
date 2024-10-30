@@ -2004,12 +2004,11 @@ function invalidate_config(conf::Option{AbstractConfig}=nothing)
     end
 end
 
-struct Metrics
-    live_bytes::Int64
-end
-
 function current_metrics()
-    return @ccall rust_lib.current_metrics()::Metrics
+    metrics_ptr = @ccall rust_lib.current_metrics()::Ptr{Cchar}
+    metrics_string = unsafe_string(metrics_ptr)
+    metrics = JSON3.read(metrics_string)
+    return metrics
 end
 
 module Test
