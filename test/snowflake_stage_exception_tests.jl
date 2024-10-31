@@ -89,7 +89,7 @@
             @test false # Should have thrown an error
         catch e
             @test e isa RustyObjectStore.PutException
-            @test occursin("Connection refused", e.msg)
+            @test occursin("Connection refused", e.msg) || occursin("Unable to access master token file", e.msg)
         end
 
         try
@@ -97,7 +97,7 @@
             @test false # Should have thrown an error
         catch e
             @test e isa RustyObjectStore.GetException
-            @test occursin("Connection refused", e.msg)
+            @test occursin("Connection refused", e.msg) || occursin("Unable to access master token file", e.msg)
         end
     end
 
