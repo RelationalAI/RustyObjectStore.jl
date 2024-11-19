@@ -1,4 +1,6 @@
-using CloudBase: CloudCredentials, AWSCredentials, AbstractStore, AWS
+using CloudBase: CloudCredentials, AbstractStore
+using CloudBase: AWSCredentials, AWS
+using CloudBase: AzureCredentials, Azure
 using JSON3, HTTP, Sockets, Base64
 using RustyObjectStore: SnowflakeConfig, ClientOptions
 using Base: UUID
@@ -118,6 +120,31 @@ function construct_stage_info(credentials::AWSCredentials, store::AWS.Bucket, pa
     )
 end
 
+function construct_stage_info(credentials::AzureCredentials, store::Azure.Container, path::String, encrypted::Bool)
+    m = match(r"(https?://.*?)/(.*)", store.baseurl)
+    @assert !isnothing(m)
+    test_endpoint = m.captures[1]
+    rest = split(HTTP.unescapeuri(m.captures[2]), "/")
+    account = rest[1]
+    container = rest[2]
+
+    Dict(
+        "locationType" => "AZURE",
+        "location" => container * "/",
+        "path" => path,
+        "region" => "westus2",
+        "storageAccount" => account,
+        "isClientSideEncrypted" => encrypted,
+        "ciphers" => encrypted ? "AES_CBC" : nothing,
+        "creds" => Dict(
+            "AZURE_SAS_TOKEN" => "dummy-token",
+        ),
+        "useS3RegionalUrl" => false,
+        "endPoint" => "blob.core.windows.net",
+        "testEndpoint" => test_endpoint,
+    )
+end
+
 function next_id_and_key(gw::SFGatewayMock)
     @lock gw.keys_lock begin
         key_id = gw.next_key_id
@@ -216,6 +243,8 @@ function start(gw::SFGatewayMock)
 
                 stage_info = if isa(gw.credentials, AWSCredentials) && isa(gw.store, AWS.Bucket)
                     construct_stage_info(gw.credentials, gw.store, stage_path(stage), gw.encrypted)
+                elseif isa(gw.credentials, AzureCredentials) && isa(gw.store, Azure.Container)
+                    construct_stage_info(gw.credentials, gw.store, stage_path(stage), gw.encrypted)
                 else
                     error("unimplemented")
                 end
@@ -251,18 +280,32 @@ function start(gw::SFGatewayMock)
 
                 stage_info = if isa(gw.credentials, AWSCredentials) && isa(gw.store, AWS.Bucket)
                     construct_stage_info(gw.credentials, gw.store, stage_path(stage), gw.encrypted)
+                elseif isa(gw.credentials, AzureCredentials) && isa(gw.store, Azure.Container)
+                    construct_stage_info(gw.credentials, gw.store, stage_path(stage), gw.encrypted)
                 else
                     error("unimplemented")
                 end
 
                 encryption_material = if gw.encrypted
-                    # fetch key id from s3 meta and return key
-                    response = AWS.head(
-                        stage_info["testEndpoint"] * "/" * stage_info["location"] * path;
-                        service="s3", region="us-east-1", credentials=gw.credentials
-                    )
-                    pos = findfirst(x -> x[1] == "x-amz-meta-x-amz-matdesc", response.headers)
-                    matdesc = JSON3.read(response.headers[pos][2])
+                    # fetch key id from blob meta and return key
+                    headers, metadata_key = if isa(gw.credentials, AWSCredentials)
+                        response = AWS.head(
+                            stage_info["testEndpoint"] * "/" * stage_info["location"] * path;
+                            service="s3", region="us-east-1", credentials=gw.credentials
+                        )
+                        response.headers, "x-amz-meta-x-amz-matdesc"
+                    elseif isa(gw.credentials, AzureCredentials)
+                        response = Azure.head(
+                            stage_info["testEndpoint"] * "/" * stage_info["storageAccount"] * "/" * stage_info["location"] * path;
+                            service="blob", region="westus2", credentials=gw.credentials
+                        )
+                        println("response headers: $(response.headers)")
+                        response.headers, "x-ms-meta-matdesc"
+                    else
+                        error("unknown credentials type: $(typeof(gw.credentials))")
+                    end
+                    pos = findfirst(x -> x[1] == metadata_key, headers)
+                    matdesc = JSON3.read(headers[pos][2])
                     key_id = matdesc["queryId"]
                     key = find_key_by_id(gw, key_id)
                     Dict(
