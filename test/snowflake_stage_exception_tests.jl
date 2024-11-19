@@ -237,6 +237,10 @@ end # @testitem
             nrequests[] += 1
             HTTP.setstatus(http, 200)
             HTTP.setheader(http, "Content-Length" => "20")
+            if provider == :azure
+                HTTP.setheader(http, "Last-Modified" => "Tue, 15 Oct 2019 12:45:26 GMT")
+                HTTP.setheader(http, "ETag" => "123")
+            end
             HTTP.startwrite(http)
             write(http, "not enough")
             close(http.stream)
@@ -320,6 +324,10 @@ end # @testitem
             nrequests[] += 1
             HTTP.setstatus(http, 200)
             HTTP.setheader(http, "Content-Length" => "20")
+            if provider == :azure
+                HTTP.setheader(http, "Last-Modified" => "Tue, 15 Oct 2019 12:45:26 GMT")
+                HTTP.setheader(http, "ETag" => "123")
+            end
             HTTP.startwrite(http)
             write(http, "not enough")
             socket = HTTP.IOExtras.tcpsocket(HTTP.Connections.getrawstream(http))
@@ -697,7 +705,6 @@ end # @testitem
         end
     end
 
-    # TODO: failing
     @testset "Incomplete GET body" begin
         for_all_providers() do provider
             nrequests = test_get_stream_error(provider)
@@ -705,7 +712,6 @@ end # @testitem
         end
     end
 
-    # TODO: failing
     @testset "Incomplete GET body reset" begin
         for_all_providers() do provider
             nrequests = test_get_stream_reset(provider)
