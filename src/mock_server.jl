@@ -299,7 +299,6 @@ function start(gw::SFGatewayMock)
                             stage_info["testEndpoint"] * "/" * stage_info["storageAccount"] * "/" * stage_info["location"] * path;
                             service="blob", region="westus2", credentials=gw.credentials
                         )
-                        println("response headers: $(response.headers)")
                         response.headers, "x-ms-meta-matdesc"
                     else
                         error("unknown credentials type: $(typeof(gw.credentials))")
