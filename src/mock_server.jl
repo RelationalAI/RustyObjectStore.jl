@@ -128,6 +128,7 @@ function construct_stage_info(credentials::AzureCredentials, store::Azure.Contai
     account = rest[1]
     container = rest[2]
 
+
     Dict(
         "locationType" => "AZURE",
         "location" => container * "/",
