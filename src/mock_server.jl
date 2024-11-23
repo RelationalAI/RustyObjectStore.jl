@@ -121,12 +121,8 @@ function construct_stage_info(credentials::AWSCredentials, store::AWS.Bucket, pa
 end
 
 function construct_stage_info(credentials::AzureCredentials, store::Azure.Container, path::String, encrypted::Bool)
-    m = match(r"(https?://.*?)/(.*)", store.baseurl)
-    @assert !isnothing(m)
-    test_endpoint = m.captures[1]
-    rest = split(HTTP.unescapeuri(m.captures[2]), "/")
-    account = rest[1]
-    container = rest[2]
+    ok, test_endpoint, account, container, _path = CloudStore.parseAzureAccountContainerBlob(store.baseurl; parseLocal=true)
+    ok || error("failed to parse Azurite baseurl")
 
 
     Dict(
