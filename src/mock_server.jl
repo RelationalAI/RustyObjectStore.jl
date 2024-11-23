@@ -120,15 +120,18 @@ function construct_stage_info(credentials::AWSCredentials, store::AWS.Bucket, pa
     )
 end
 
-function construct_stage_info(credentials::AzureCredentials, store::Azure.Container, path::String, encrypted::Bool)
-    ok, test_endpoint, account, container, _path = CloudStore.parseAzureAccountContainerBlob(store.baseurl; parseLocal=true)
-    ok || error("failed to parse Azurite baseurl")
-
+function construct_stage_info(credentials::AzureCredentials, store::Azure.Container, encrypted::Bool)
+    m = match(r"(https?://.*?)/(.*)", store.baseurl)
+    @assert !isnothing(m)
+    test_endpoint = m.captures[1]
+    rest = split(HTTP.unescapeuri(m.captures[2]), "/")
+    account = rest[1]
+    container = rest[2]
 
     Dict(
         "locationType" => "AZURE",
         "location" => container * "/",
-        "path" => path,
+        "path" => container * "/",
         "region" => "westus2",
         "storageAccount" => account,
         "isClientSideEncrypted" => encrypted,
@@ -241,7 +244,7 @@ function start(gw::SFGatewayMock)
                 stage_info = if isa(gw.credentials, AWSCredentials) && isa(gw.store, AWS.Bucket)
                     construct_stage_info(gw.credentials, gw.store, stage_path(stage), gw.encrypted)
                 elseif isa(gw.credentials, AzureCredentials) && isa(gw.store, Azure.Container)
-                    construct_stage_info(gw.credentials, gw.store, stage_path(stage), gw.encrypted)
+                    construct_stage_info(gw.credentials, gw.store, gw.encrypted)
                 else
                     error("unimplemented")
                 end
@@ -278,7 +281,7 @@ function start(gw::SFGatewayMock)
                 stage_info = if isa(gw.credentials, AWSCredentials) && isa(gw.store, AWS.Bucket)
                     construct_stage_info(gw.credentials, gw.store, stage_path(stage), gw.encrypted)
                 elseif isa(gw.credentials, AzureCredentials) && isa(gw.store, Azure.Container)
-                    construct_stage_info(gw.credentials, gw.store, stage_path(stage), gw.encrypted)
+                    construct_stage_info(gw.credentials, gw.store, gw.encrypted)
                 else
                     error("unimplemented")
                 end
