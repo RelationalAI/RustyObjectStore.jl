@@ -1,4 +1,4 @@
-using CloudBase: CloudCredentials, AbstractStore
+using CloudBase: CloudBase, CloudCredentials, AbstractStore
 using CloudBase: AWSCredentials, AWS
 using CloudBase: AzureCredentials, Azure
 using JSON3, HTTP, Sockets, Base64
@@ -121,12 +121,9 @@ function construct_stage_info(credentials::AWSCredentials, store::AWS.Bucket, pa
 end
 
 function construct_stage_info(credentials::AzureCredentials, store::Azure.Container, encrypted::Bool)
-    m = match(r"(https?://.*?)/(.*)", store.baseurl)
-    @assert !isnothing(m)
-    test_endpoint = m.captures[1]
-    rest = split(HTTP.unescapeuri(m.captures[2]), "/")
-    account = rest[1]
-    container = rest[2]
+    ok, _service, test_endpoint, account, container, _path =
+        CloudBase.parseAzureAccountContainerBlob(rstrip(store.baseurl, '/'); parseLocal=true)
+    ok || error("failed to parse Azurite baseurl")
 
     Dict(
         "locationType" => "AZURE",
