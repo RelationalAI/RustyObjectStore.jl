@@ -1,105 +1,153 @@
 @testitem "Basic Stage exceptions" setup=[InitializeObjectStore, SnowflakeMock] begin
-    using CloudBase.CloudTest: Minio
+    using CloudBase.CloudTest: Minio, Azurite
     import CloudBase
-    using RustyObjectStore: RustyObjectStore, get_object!, put_object, ClientOptions, SnowflakeConfig
+    using RustyObjectStore: RustyObjectStore, ClientOptions, SnowflakeConfig, AbstractConfig
+    using RustyObjectStore: get_object!, put_object, delete_object
 
-    # For interactive testing, use Minio.run() instead of Minio.with()
-    # conf, p = Minio.run(; debug=true, public=false); atexit(() -> kill(p))
-    Minio.with(; debug=true, public=false) do conf
-        credentials, container = conf
-        with(SFGatewayMock(credentials, container, true)) do config::SnowflakeConfig
-            global _stale_config = config
+    function run_basic_test_cases(config::AbstractConfig, provider::Symbol)
+        @testset "Insufficient output buffer size" begin
+            input = "1,2,3,4,5,6,7,8,9,1\n" ^ 5
+            buffer = Vector{UInt8}(undef, 10)
+            @assert sizeof(input) == 100
+            @assert sizeof(buffer) < sizeof(input)
 
-            @testset "Insufficient output buffer size" begin
-                input = "1,2,3,4,5,6,7,8,9,1\n" ^ 5
-                buffer = Vector{UInt8}(undef, 10)
-                @assert sizeof(input) == 100
-                @assert sizeof(buffer) < sizeof(input)
+            nbytes_written = put_object(codeunits(input), "test100B.csv", config)
+            @test nbytes_written == 100
 
-                nbytes_written = put_object(codeunits(input), "test100B.csv", config)
-                @test nbytes_written == 100
-
-                try
-                    nbytes_read = get_object!(buffer, "test100B.csv", config)
-                    @test false # Should have thrown an error
-                catch err
-                    @test err isa RustyObjectStore.GetException
-                    @test occursin("Supplied buffer was too small", err.msg)
-                end
+            try
+                nbytes_read = get_object!(buffer, "test100B.csv", config)
+                @test false # Should have thrown an error
+            catch err
+                @test err isa RustyObjectStore.GetException
+                @test occursin("Supplied buffer was too small", err.msg)
             end
+        end
 
-            @testset "Non-existing file" begin
-                buffer = Vector{UInt8}(undef, 100)
-                try
-                    get_object!(buffer, "doesnt_exist.csv", config)
-                    @test false # Should have thrown an error
-                catch e
-                    @test e isa RustyObjectStore.GetException
-                    @test occursin("404 Not Found", e.msg)
+        @testset "Non-existing file" begin
+            buffer = Vector{UInt8}(undef, 100)
+            try
+                get_object!(buffer, "doesnt_exist.csv", config)
+                @test false # Should have thrown an error
+            catch e
+                @test e isa RustyObjectStore.GetException
+                @test occursin("404 Not Found", e.msg)
+                println("type of config: ", typeof(config))
+                println("config: ", config)
+                if provider == :aws
                     @test occursin("The specified key does not exist", e.msg)
+                else
+                    @test occursin("The specified blob does not exist", e.msg)
                 end
             end
+        end
 
-            @testset "Delete non-existing file" begin
+        @testset "Delete non-existing file" begin
+            if provider == :aws
                 # S3 semantics is to return success on deleting a non-existing file, so we expect this
                 # to succeed
                 delete_object("doesnt_exist.csv", config)
                 @test true
-            end
-
-            @testset "Non-existing container" begin
-                bad_config = SnowflakeConfig(
-                    stage="doesnotexist",
-                    account=config.account,
-                    database=config.database,
-                    schema=config.schema,
-                    endpoint=config.endpoint,
-                    master_token_path=config.master_token_path,
-                    opts=ClientOptions(max_retries=2)
-                )
-                buffer = Vector{UInt8}(undef, 100)
-
+            else
                 try
-                    put_object(codeunits("a,b,c"), "invalid_credentials2.csv", bad_config)
+                    delete_object("doesnt_exist.csv", config)
                     @test false # Should have thrown an error
                 catch e
-                    @test e isa RustyObjectStore.PutException
-                    @test occursin("Stage not found", e.msg)
-                end
-
-                nbytes_written = put_object(codeunits("a,b,c"), "invalid_credentials2.csv", config)
-                @assert nbytes_written == 5
-
-                try
-                    get_object!(buffer, "invalid_credentials2.csv", bad_config)
-                    @test false # Should have thrown an error
-                catch e
-                    @test e isa RustyObjectStore.GetException
-                    @test occursin("Stage not found", e.msg)
+                    @test e isa RustyObjectStore.DeleteException
+                    @test occursin("404 Not Found", e.msg)
+                    @test occursin("The specified blob does not exist", e.msg)
                 end
             end
-        end # with(SFGatewayMock)
-    end # Minio.with
-    # Minio is not running at this point
-    @testset "Connection error" begin
-        buffer = Vector{UInt8}(undef, 100)
-        # These test retry the connection error
-        try
-            put_object(codeunits("a,b,c"), "still_doesnt_exist.csv", _stale_config)
-            @test false # Should have thrown an error
-        catch e
-            @test e isa RustyObjectStore.PutException
-            @test occursin("Connection refused", e.msg) || occursin("Unable to access master token file", e.msg)
         end
 
-        try
-            get_object!(buffer, "still_doesnt_exist.csv", _stale_config)
-            @test false # Should have thrown an error
-        catch e
-            @test e isa RustyObjectStore.GetException
-            @test occursin("Connection refused", e.msg) || occursin("Unable to access master token file", e.msg)
+        @testset "Non-existing container" begin
+            bad_config = SnowflakeConfig(
+                stage="doesnotexist",
+                account=config.account,
+                database=config.database,
+                schema=config.schema,
+                endpoint=config.endpoint,
+                master_token_path=config.master_token_path,
+                opts=ClientOptions(max_retries=2)
+            )
+            buffer = Vector{UInt8}(undef, 100)
+
+            try
+                put_object(codeunits("a,b,c"), "invalid_credentials2.csv", bad_config)
+                @test false # Should have thrown an error
+            catch e
+                @test e isa RustyObjectStore.PutException
+                @test occursin("Stage not found", e.msg)
+            end
+
+            nbytes_written = put_object(codeunits("a,b,c"), "invalid_credentials2.csv", config)
+            @assert nbytes_written == 5
+
+            try
+                get_object!(buffer, "invalid_credentials2.csv", bad_config)
+                @test false # Should have thrown an error
+            catch e
+                @test e isa RustyObjectStore.GetException
+                @test occursin("Stage not found", e.msg)
+            end
         end
     end
+
+    function run_stale_config_test_cases(stale_config::AbstractConfig)
+        @testset "Connection error" begin
+            buffer = Vector{UInt8}(undef, 100)
+            # These test retry the connection error
+            try
+                put_object(codeunits("a,b,c"), "still_doesnt_exist.csv", stale_config)
+                @test false # Should have thrown an error
+            catch e
+                @test e isa RustyObjectStore.PutException
+                @test occursin("Connection refused", e.msg) || occursin("Unable to access master token file", e.msg)
+            end
+
+            try
+                get_object!(buffer, "still_doesnt_exist.csv", stale_config)
+                @test false # Should have thrown an error
+            catch e
+                @test e isa RustyObjectStore.GetException
+                @test occursin("Connection refused", e.msg) || occursin("Unable to access master token file", e.msg)
+            end
+        end
+    end
+
+    @testset "aws" begin
+        # For interactive testing, use Minio.run() instead of Minio.with()
+        # conf, p = Minio.run(; debug=true, public=false); atexit(() -> kill(p))
+        Minio.with(; debug=true, public=false) do conf
+            credentials, container = conf
+            with(SFGatewayMock(credentials, container, true)) do config::SnowflakeConfig
+                global _stale_config = config
+
+                run_basic_test_cases(config, :aws)
+
+            end # with(SFGatewayMock)
+        end # Minio.with
+
+        # MinIO is not running at this point
+        run_stale_config_test_cases(_stale_config)
+    end
+
+    @testset "azure" begin
+        # For interactive testing, use Azurite.run() instead of Azurite.with()
+        # conf, p = Azurite.run(; debug=true, public=false); atexit(() -> kill(p))
+        Azurite.with(; debug=true, public=false) do conf
+            credentials, container = conf
+            with(SFGatewayMock(credentials, container, true)) do config::SnowflakeConfig
+                global _stale_config = config
+
+                run_basic_test_cases(config, :azure)
+
+            end # with(SFGatewayMock)
+        end # Azurite.with
+
+        # Azurite is not running at this point
+        run_stale_config_test_cases(_stale_config)
+    end
+
 
     @testset "multiple start" begin
         res = @ccall RustyObjectStore.rust_lib.start()::Cint
@@ -118,9 +166,32 @@ end # @testitem
     retry_timeout_secs = 10
     request_timeout_secs = 1
 
+    function for_all_providers(f::Function)
+        for provider in [:aws, :azure]
+            @testset "$(String(provider))" begin
+                f(provider)
+            end
+        end
+    end
+
+    function get_creds_and_container(provider, port)
+        @assert provider === :aws || provider === :azure
+        if provider == :aws
+            return (
+                CloudBase.AWSCredentials("dummy", "dummy"),
+                CloudBase.AWS.Bucket("dummy", host="http://127.0.0.1:$port"),
+            )
+        else
+            return (
+                CloudBase.AzureCredentials("dummy", "dummy"),
+                CloudBase.Azure.Container("dummy", "dummy", host="http://127.0.0.1:$port"),
+            )
+        end
+    end
+
     # Starts a TCP server that will accept the connection and start reading a few
     # bytes before closing the connection.
-    function test_tcp_error(method)
+    function test_tcp_error(method, provider)
         @assert method === :GET || method === :PUT
         nrequests = Ref(0)
 
@@ -138,8 +209,7 @@ end # @testitem
             max_retries=max_retries,
             retry_timeout_secs=retry_timeout_secs
         )
-        credentials = CloudBase.AWSCredentials("dummy", "dummy")
-        container = CloudBase.AWS.Bucket("dummy", host="http://127.0.0.1:$port")
+        credentials, container = get_creds_and_container(provider, port)
         with(SFGatewayMock(credentials, container, true, opts=opts)) do conf::SnowflakeConfig
             try
                 method === :GET && get_object!(zeros(UInt8, 5), "blob", conf)
@@ -159,7 +229,7 @@ end # @testitem
 
     # Starts an HTTP server that will respond with the headers for a GET response
     # and will write a partial body before closing the connection.
-    function test_get_stream_error()
+    function test_get_stream_error(provider)
         nrequests = Ref(0)
 
         (port, tcp_server) = Sockets.listenany(8083)
@@ -167,6 +237,10 @@ end # @testitem
             nrequests[] += 1
             HTTP.setstatus(http, 200)
             HTTP.setheader(http, "Content-Length" => "20")
+            if provider == :azure
+                HTTP.setheader(http, "Last-Modified" => "Tue, 15 Oct 2019 12:45:26 GMT")
+                HTTP.setheader(http, "ETag" => "123")
+            end
             HTTP.startwrite(http)
             write(http, "not enough")
             close(http.stream)
@@ -176,8 +250,7 @@ end # @testitem
             max_retries=max_retries,
             retry_timeout_secs=retry_timeout_secs
         )
-        credentials = CloudBase.AWSCredentials("dummy", "dummy")
-        container = CloudBase.AWS.Bucket("dummy", host="http://127.0.0.1:$port")
+        credentials, container = get_creds_and_container(provider, port)
         with(SFGatewayMock(credentials, container, false, opts=opts)) do conf::SnowflakeConfig
             try
                 get_object!(zeros(UInt8, 20), "blob", conf)
@@ -200,7 +273,7 @@ end # @testitem
 
     # Starts a TCP server that will accept the connection and start reading a few
     # bytes before forcing a TCP reset on the connection.
-    function test_tcp_reset(method)
+    function test_tcp_reset(method, provider)
         @assert method === :GET || method === :PUT
         nrequests = Ref(0)
 
@@ -223,8 +296,7 @@ end # @testitem
             max_retries=max_retries,
             retry_timeout_secs=retry_timeout_secs
         )
-        credentials = CloudBase.AWSCredentials("dummy", "dummy")
-        container = CloudBase.AWS.Bucket("dummy", host="http://127.0.0.1:$port")
+        credentials, container = get_creds_and_container(provider, port)
         with(SFGatewayMock(credentials, container, true, opts=opts)) do conf::SnowflakeConfig
             try
                 method === :GET && get_object!(zeros(UInt8, 5), "blob", conf)
@@ -244,7 +316,7 @@ end # @testitem
 
     # Starts an HTTP server that will respond with the headers for a GET response
     # and will write a partial body before forcing a TCP reset on the connection.
-    function test_get_stream_reset()
+    function test_get_stream_reset(provider)
         nrequests = Ref(0)
 
         (port, tcp_server) = Sockets.listenany(8083)
@@ -252,6 +324,10 @@ end # @testitem
             nrequests[] += 1
             HTTP.setstatus(http, 200)
             HTTP.setheader(http, "Content-Length" => "20")
+            if provider == :azure
+                HTTP.setheader(http, "Last-Modified" => "Tue, 15 Oct 2019 12:45:26 GMT")
+                HTTP.setheader(http, "ETag" => "123")
+            end
             HTTP.startwrite(http)
             write(http, "not enough")
             socket = HTTP.IOExtras.tcpsocket(HTTP.Connections.getrawstream(http))
@@ -268,8 +344,7 @@ end # @testitem
             max_retries=max_retries,
             retry_timeout_secs=retry_timeout_secs
         )
-        credentials = CloudBase.AWSCredentials("dummy", "dummy")
-        container = CloudBase.AWS.Bucket("dummy", host="http://127.0.0.1:$port")
+        credentials, container = get_creds_and_container(provider, port)
         with(SFGatewayMock(credentials, container, false, opts=opts)) do conf::SnowflakeConfig
             try
                 get_object!(zeros(UInt8, 20), "blob", conf)
@@ -288,7 +363,7 @@ end # @testitem
 
     # Starts an HTTP server that will respond with the headers for a GET response
     # and will write a partial body before sleeping until the client times out.
-    function test_get_stream_timeout()
+    function test_get_stream_timeout(provider)
         nrequests = Ref(0)
 
         (port, tcp_server) = Sockets.listenany(8083)
@@ -309,8 +384,7 @@ end # @testitem
             retry_timeout_secs=retry_timeout_secs,
             request_timeout_secs
         )
-        credentials = CloudBase.AWSCredentials("dummy", "dummy")
-        container = CloudBase.AWS.Bucket("dummy", host="http://127.0.0.1:$port")
+        credentials, container = get_creds_and_container(provider, port)
         with(SFGatewayMock(credentials, container, false, opts=opts)) do conf::SnowflakeConfig
             try
                 get_object!(zeros(UInt8, 20), "blob", conf)
@@ -330,7 +404,7 @@ end # @testitem
     # Starts an HTTP server that will respond with the provided status code
     # when receiving a request for the provided method, it optionally returns
     # the provided headers in the response
-    function test_status(method, response_status, headers=nothing)
+    function test_status(method, response_status, provider, headers=nothing)
         @assert method === :GET || method === :PUT
         nrequests = Ref(0)
         response_body = "response body from the dummy server"
@@ -350,8 +424,7 @@ end # @testitem
             max_retries=max_retries,
             retry_timeout_secs=retry_timeout_secs
         )
-        credentials = CloudBase.AWSCredentials("dummy", "dummy")
-        container = CloudBase.AWS.Bucket("dummy", host="http://127.0.0.1:$port")
+        credentials, container = get_creds_and_container(provider, port)
         with(SFGatewayMock(credentials, container, true, opts=opts)) do conf::SnowflakeConfig
             try
                 method === :GET && get_object!(zeros(UInt8, 5), "blob", conf)
@@ -372,7 +445,7 @@ end # @testitem
     end
 
     # Starts an HTTP server that upon receiving the request sleeps until the client times out.
-    function test_timeout(method, message, wait_secs::Int = 60)
+    function test_timeout(method, message, provider, wait_secs::Int = 60)
         @assert method === :GET || method === :PUT
         nrequests = Ref(0)
         response_body = "response body from the dummy server"
@@ -395,8 +468,7 @@ end # @testitem
             retry_timeout_secs=retry_timeout_secs,
             request_timeout_secs
         )
-        credentials = CloudBase.AWSCredentials("dummy", "dummy")
-        container = CloudBase.AWS.Bucket("dummy", host="http://127.0.0.1:$port")
+        credentials, container = get_creds_and_container(provider, port)
         with(SFGatewayMock(credentials, container, true, opts=opts)) do conf::SnowflakeConfig
             try
                 method === :GET && get_object!(zeros(UInt8, 5), "blob", conf)
@@ -417,7 +489,7 @@ end # @testitem
 
     # Starts an HTTP server that upon receiving the request sleeps for 5 seconds to allow
     # for the client to simulate a cancellation.
-    function test_cancellation()
+    function test_cancellation(provider)
         nrequests = Ref(0)
         response_body = "response body from the dummy server"
 
@@ -437,8 +509,7 @@ end # @testitem
             retry_timeout_secs=10,
             request_timeout_secs=10
         )
-        credentials = CloudBase.AWSCredentials("dummy", "dummy")
-        container = CloudBase.AWS.Bucket("dummy", host="http://127.0.0.1:$port")
+        credentials, container = get_creds_and_container(provider, port)
         with(SFGatewayMock(credentials, container, true, opts=opts)) do conf::SnowflakeConfig
             try
                 size = 7_000_000
@@ -474,78 +545,94 @@ end # @testitem
         # AWS S3 can also respond with this code for other unrecoverable cases such as when
         # an upload exceeds the maximum allowed object size
         # See https://www.rfc-editor.org/rfc/rfc9110#status.400
-        nrequests = test_status(:GET, 400)
-        @test nrequests == 1
-        nrequests = test_status(:PUT, 400)
-        @test nrequests == 1
+        for_all_providers() do provider
+            nrequests = test_status(:GET, 400, provider)
+            @test nrequests == 1
+            nrequests = test_status(:PUT, 400, provider)
+            @test nrequests == 1
+        end
     end
 
     @testset "403: Forbidden" begin
         # Returned when you pass an invalid api-key.
         # See https://www.rfc-editor.org/rfc/rfc9110#status.403
-        nrequests = test_status(:GET, 403)
-        @test nrequests == 1
-        nrequests = test_status(:PUT, 403)
-        @test nrequests == 1
+        for_all_providers() do provider
+            nrequests = test_status(:GET, 403, provider)
+            @test nrequests == 1
+            nrequests = test_status(:PUT, 403, provider)
+            @test nrequests == 1
+        end
     end
 
     @testset "404: Not Found" begin
         # Returned when container not found or blob not found
         # See https://docs.aws.amazon.com/AmazonS3/latest/API/ErrorResponses.html
         # See https://www.rfc-editor.org/rfc/rfc9110#status.404
-        nrequests = test_status(:GET, 404)
-        @test nrequests == 1
+        for_all_providers() do provider
+            nrequests = test_status(:GET, 404, provider)
+            @test nrequests == 1
+        end
     end
 
     @testset "405: Method Not Supported" begin
         # See https://www.rfc-editor.org/rfc/rfc9110#status.405
-        nrequests = test_status(:GET, 405, ["Allow" => "PUT"])
-        @test nrequests == 1
-        nrequests = test_status(:PUT, 405, ["Allow" => "GET"])
-        @test nrequests == 1
+        for_all_providers() do provider
+            nrequests = test_status(:GET, 405, provider, ["Allow" => "PUT"])
+            @test nrequests == 1
+            nrequests = test_status(:PUT, 405, provider, ["Allow" => "GET"])
+            @test nrequests == 1
+        end
     end
 
     @testset "409: Conflict" begin
         # Returned when write operations conflict.
         # See https://docs.aws.amazon.com/AmazonS3/latest/API/ErrorResponses.html
         # See https://www.rfc-editor.org/rfc/rfc9110#status.409
-        nrequests = test_status(:GET, 409)
-        @test nrequests == 1
-        nrequests = test_status(:PUT, 409)
-        @test nrequests == 1
+        for_all_providers() do provider
+            nrequests = test_status(:GET, 409, provider)
+            @test nrequests == 1
+            nrequests = test_status(:PUT, 409, provider)
+            @test nrequests == 1
+        end
     end
 
     @testset "412: Precondition Failed" begin
         # Returned when an If-Match or If-None-Match header's condition evaluates to false
         # See https://docs.aws.amazon.com/AmazonS3/latest/API/ErrorResponses.html
         # See https://www.rfc-editor.org/rfc/rfc9110#status.412
-        nrequests = test_status(:GET, 412)
-        @test nrequests == 1
-        nrequests = test_status(:PUT, 412)
-        @test nrequests == 1
+        for_all_providers() do provider
+            nrequests = test_status(:GET, 412, provider)
+            @test nrequests == 1
+            nrequests = test_status(:PUT, 412, provider)
+            @test nrequests == 1
+        end
     end
 
     @testset "413: Content Too Large" begin
         # See https://www.rfc-editor.org/rfc/rfc9110#status.413
-        nrequests = test_status(:PUT, 413)
-        @test nrequests == 1
+        for_all_providers() do provider
+            nrequests = test_status(:PUT, 413, provider)
+            @test nrequests == 1
+        end
     end
 
     @testset "429: Too Many Requests" begin
-        # See https://www.rfc-editor.org/rfc/rfc6585#section-4
-        nrequests = test_status(:GET, 429)
-        @test nrequests == 1
-        nrequests = test_status(:PUT, 429)
-        @test nrequests == 1
-        # See https://www.rfc-editor.org/rfc/rfc9110#field.retry-after
-        # TODO: We probably should respect the Retry-After header, but we currently don't
-        # (and we don't know if AWS actually sets it)
-        # This can happen when AWS is throttling us, so it might be a good idea to retry with some
-        # larger initial backoff (very eager retries probably only make the situation worse).
-        nrequests = test_status(:GET, 429, ["Retry-After" => 10])
-        @test nrequests == 1 + max_retries broken=true
-        nrequests = test_status(:PUT, 429, ["Retry-After" => 10])
-        @test nrequests == 1 + max_retries broken=true
+        for_all_providers() do provider
+            # See https://www.rfc-editor.org/rfc/rfc6585#section-4
+            nrequests = test_status(:GET, 429, provider)
+            @test nrequests == 1
+            nrequests = test_status(:PUT, 429, provider)
+            @test nrequests == 1
+            # See https://www.rfc-editor.org/rfc/rfc9110#field.retry-after
+            # TODO: We probably should respect the Retry-After header, but we currently don't
+            # (and we don't know if AWS actually sets it)
+            # This can happen when AWS is throttling us, so it might be a good idea to retry with some
+            # larger initial backoff (very eager retries probably only make the situation worse).
+            nrequests = test_status(:GET, 429, provider, ["Retry-After" => 10])
+            @test nrequests == 1 + max_retries broken=true
+            nrequests = test_status(:PUT, 429, provider, ["Retry-After" => 10])
+            @test nrequests == 1 + max_retries broken=true
+        end
     end
 
     @testset "502: Bad Gateway" begin
@@ -554,10 +641,12 @@ end # @testitem
         #   gateway or proxy, received an invalid response from an inbound server it accessed
         #   while attempting to fulfill the request.
         # This error can occur when you enter HTTP instead of HTTPS in the connection.
-        nrequests = test_status(:GET, 502)
-        @test nrequests == 1 + max_retries
-        nrequests = test_status(:PUT, 502)
-        @test nrequests == 1 + max_retries
+        for_all_providers() do provider
+            nrequests = test_status(:GET, 502, provider)
+            @test nrequests == 1 + max_retries
+            nrequests = test_status(:PUT, 502, provider)
+            @test nrequests == 1 + max_retries
+        end
     end
 
     @testset "503: Service Unavailable" begin
@@ -568,10 +657,12 @@ end # @testitem
         #   header field (Section 10.2.3) to suggest an appropriate amount of time for the
         #   client to wait before retrying the request.
         # See https://docs.aws.amazon.com/AmazonS3/latest/API/ErrorResponses.html
-        nrequests = test_status(:GET, 503)
-        @test nrequests == 1 + max_retries
-        nrequests = test_status(:PUT, 503)
-        @test nrequests == 1 + max_retries
+        for_all_providers() do provider
+            nrequests = test_status(:GET, 503, provider)
+            @test nrequests == 1 + max_retries
+            nrequests = test_status(:PUT, 503, provider)
+            @test nrequests == 1 + max_retries
+        end
     end
 
     @testset "504: Gateway Timeout" begin
@@ -579,50 +670,66 @@ end # @testitem
         #   The 504 (Gateway Timeout) status code indicates that the server, while acting as
         #   a gateway or proxy, did not receive a timely response from an upstream server it
         #   needed to access in order to complete the request
-        nrequests = test_status(:GET, 504)
-        @test nrequests == 1 + max_retries
-        nrequests = test_status(:PUT, 504)
-        @test nrequests == 1 + max_retries
+        for_all_providers() do provider
+            nrequests = test_status(:GET, 504, provider)
+            @test nrequests == 1 + max_retries
+            nrequests = test_status(:PUT, 504, provider)
+            @test nrequests == 1 + max_retries
+        end
     end
 
     @testset "Timeout" begin
-        nrequests = test_timeout(:GET, "timed out", 2)
-        @test nrequests == 1 + max_retries
-        nrequests = test_timeout(:PUT, "timed out", 2)
-        @test nrequests == 1 + max_retries
+        for_all_providers() do provider
+            nrequests = test_timeout(:GET, "timed out", provider, 2)
+            @test nrequests == 1 + max_retries
+            nrequests = test_timeout(:PUT, "timed out", provider, 2)
+            @test nrequests == 1 + max_retries
+        end
     end
 
     @testset "TCP Closed" begin
-        nrequests = test_tcp_error(:GET)
-        @test nrequests == 1 + max_retries
-        nrequests = test_tcp_error(:PUT)
-        @test nrequests == 1 + max_retries
+        for_all_providers() do provider
+            nrequests = test_tcp_error(:GET, provider)
+            @test nrequests == 1 + max_retries
+            nrequests = test_tcp_error(:PUT, provider)
+            @test nrequests == 1 + max_retries
+        end
     end
 
     @testset "TCP reset" begin
-        nrequests = test_tcp_reset(:GET)
-        @test nrequests == 1 + max_retries
-        nrequests = test_tcp_reset(:PUT)
-        @test nrequests == 1 + max_retries
+        for_all_providers() do provider
+            nrequests = test_tcp_reset(:GET, provider)
+            @test nrequests == 1 + max_retries
+            nrequests = test_tcp_reset(:PUT, provider)
+            @test nrequests == 1 + max_retries
+        end
     end
 
     @testset "Incomplete GET body" begin
-        nrequests = test_get_stream_error()
-        @test nrequests == 1 + max_retries
+        for_all_providers() do provider
+            nrequests = test_get_stream_error(provider)
+            @test nrequests == 1 + max_retries
+        end
     end
 
     @testset "Incomplete GET body reset" begin
-        nrequests = test_get_stream_reset()
-        @test nrequests == 1 + max_retries
+        for_all_providers() do provider
+            nrequests = test_get_stream_reset(provider)
+            @test nrequests == 1 + max_retries
+        end
     end
 
     @testset "Incomplete GET body timeout" begin
-        nrequests = test_get_stream_timeout()
-        @test nrequests == 1 + max_retries
+        for_all_providers() do provider
+            nrequests = test_get_stream_timeout(provider)
+            @test nrequests == 1 + max_retries
+        end
     end
 
     @testset "Cancellation" begin
-        nrequests = test_cancellation()
-        @test nrequests == 1
+        for_all_providers() do provider
+            nrequests = test_cancellation(provider)
+            @test nrequests == 1
+        end
     end
 end

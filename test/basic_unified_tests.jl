@@ -776,7 +776,7 @@ Minio.with(; debug=true, public=true) do conf
 end # Minio.with
 end # @testitem
 
-@testitem "Basic Snowflake Stage usage" setup=[InitializeObjectStore, SnowflakeMock, ReadWriteCases] begin
+@testitem "Basic Snowflake Stage usage: AWS, non-encrypted" setup=[InitializeObjectStore, SnowflakeMock, ReadWriteCases] begin
 using CloudBase.CloudTest: Minio
 using RustyObjectStore: SnowflakeConfig, ClientOptions
 
@@ -793,7 +793,7 @@ Minio.with(; debug=true, public=false) do conf
 end # Minio.with
 end # @testitem
 
-@testitem "Basic Snowflake Stage usage (encrypted)" setup=[InitializeObjectStore, SnowflakeMock, ReadWriteCases] begin
+@testitem "Basic Snowflake Stage usage: AWS, encrypted" setup=[InitializeObjectStore, SnowflakeMock, ReadWriteCases] begin
 using CloudBase.CloudTest: Minio
 using RustyObjectStore: SnowflakeConfig, ClientOptions
 
@@ -808,4 +808,38 @@ Minio.with(; debug=true, public=false) do conf
         run_sanity_test_cases(config)
     end
 end # Minio.with
+end # @testitem
+
+@testitem "Basic Snowflake Stage usage: Azure, non-encrypted" setup=[InitializeObjectStore, SnowflakeMock, ReadWriteCases] begin
+using CloudBase.CloudTest: Azurite
+using RustyObjectStore: SnowflakeConfig, ClientOptions
+
+# For interactive testing, use Azurite.run() instead of Azurite.with()
+# conf, p = Azurite.run(; debug=true, public=false); atexit(() -> kill(p))
+Azurite.with(; debug=true, public=false) do conf
+    credentials, container = conf
+    with(SFGatewayMock(credentials, container, false)) do config::SnowflakeConfig
+        run_read_write_test_cases(config)
+        run_stream_test_cases(config)
+        run_list_test_cases(config)
+        run_sanity_test_cases(config)
+    end
+end # Azurite.with
+end # @testitem
+
+@testitem "Basic Snowflake Stage usage: Azure, encrypted" setup=[InitializeObjectStore, SnowflakeMock, ReadWriteCases] begin
+using CloudBase.CloudTest: Azurite
+using RustyObjectStore: SnowflakeConfig, ClientOptions
+
+# For interactive testing, use Azurite.run() instead of Azurite.with()
+# conf, p = Azurite.run(; debug=true, public=false); atexit(() -> kill(p))
+Azurite.with(; debug=true, public=false) do conf
+    credentials, container = conf
+    with(SFGatewayMock(credentials, container, true)) do config::SnowflakeConfig
+        run_read_write_test_cases(config)
+        run_stream_test_cases(config)
+        run_list_test_cases(config; strict_entry_size=false)
+        run_sanity_test_cases(config)
+    end
+end # Azurite.with
 end # @testitem
