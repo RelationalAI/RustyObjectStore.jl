@@ -905,6 +905,102 @@ function delete_object(path::String, conf::AbstractConfig)
     end
 end
 
+# =========================================================================================
+# Bulk Delete
+struct BulkFailedEntryFFI
+    path::Cstring
+    error_message::Cstring
+end
+
+struct BulkFailedEntry
+    path::String
+    error_message::String
+end
+
+function convert_bulk_failed_entry(entry::BulkFailedEntryFFI)
+    return BulkFailedEntry(
+        unsafe_string(entry.path),
+        unsafe_string(entry.error_message),
+    )
+end
+
+mutable struct BulkResponseFFI
+    result::Cint
+    failed_entries::Ptr{BulkFailedEntryFFI}
+    failed_count::Culonglong
+    error_message::Ptr{Cchar}
+    context::Ptr{Cvoid}
+
+    BulkResponseFFI() = new(-1, C_NULL, 0, C_NULL, C_NULL)
+end
+
+"""
+    bulk_delete_objects(path, conf)
+
+Send a delete request to the object store.
+
+# Arguments
+- `path::String`: The location of the object to delete.
+- `conf::AbstractConfig`: The configuration to use for the request.
+  It includes credentials and other client options.
+
+# Throws
+- `DeleteException`: If the request fails for any reason. Note that S3 will treat a delete request
+  to a non-existing object as a success, while Azure Blob will treat it as a 404 error.
+"""
+function bulk_delete_objects(paths::Vector{String}, conf::AbstractConfig)
+    response = BulkResponseFFI()
+    ct = current_task()
+    event = Base.Event()
+    handle = pointer_from_objref(event)
+    config = into_config(conf)
+    while true
+        preserve_task(ct)
+        # Convert Julia strings to Cstrings
+        c_paths = [Base.cconvert(Cstring, path) for path in paths]
+        # Create an array of pointers to the Cstrings
+        paths_array = [pointer(c_path) for c_path in c_paths]
+        result = GC.@preserve paths c_paths paths_array config response event try
+            # Pass a pointer to the array of pointers to the Cstrings
+            c_paths_ptr = pointer(paths_array)
+            result = @ccall rust_lib.bulk_delete(
+                c_paths_ptr::Ptr{Ptr{Cchar}},
+                length(paths)::Cuint,
+                config::Ref{Config},
+                response::Ref{BulkResponseFFI},
+                handle::Ptr{Cvoid}
+            )::Cint
+
+            wait_or_cancel(event, response)
+
+            result
+        finally
+            unpreserve_task(ct)
+        end
+
+        if result == 2
+            # backoff
+            sleep(0.01)
+            continue
+        end
+
+        entries = if response.failed_count > 0
+            raw_entries = unsafe_wrap(Array, response.failed_entries, response.failed_count)
+            vector = map(convert_bulk_failed_entry, raw_entries)
+            @ccall rust_lib.destroy_bulk_failed_entries(
+                response.failed_entries::Ptr{BulkFailedEntryFFI},
+                response.failed_count::Culonglong
+            )::Cint
+            vector
+        else
+            Vector{BulkFailedEntry}[]
+        end
+
+        return entries
+    end
+end
+# =========================================================================================
+
 mutable struct ReadResponseFFI
     result::Cint
     length::Culonglong

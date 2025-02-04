@@ -679,6 +679,55 @@ end # Azurite.with
 
 end # @testitem
 
+
+@testitem "playground" setup=[InitializeObjectStore, ReadWriteCases] begin
+using CloudBase.CloudTest: Azurite
+using RustyObjectStore: AzureConfig, ClientOptions
+
+
+# For interactive testing, use Azurite.run() instead of Azurite.with()
+# conf, p = Azurite.run(; debug=true, public=false); atexit(() -> kill(p))
+Azurite.with(; debug=true, public=false) do conf
+    _credentials, _container = conf
+    base_url = _container.baseurl
+    config = AzureConfig(;
+        storage_account_name=_credentials.auth.account,
+        container_name=_container.name,
+        storage_account_key=_credentials.auth.key,
+        host=base_url
+    )
+
+    @testset "delete_object" begin
+        input = "1,2,3,4,5,6,7,8,9,1\n" ^ 5
+        buffer = Vector{UInt8}(undef, 100)
+        @assert sizeof(input) == 100
+        @assert sizeof(buffer) == sizeof(input)
+
+        nbytes_written = put_object(codeunits(input), "test100B.csv", config)
+        @test nbytes_written == 100
+
+        failed_entries = RustyObjectStore.bulk_delete_objects(
+            ["test100B.csv", "not_to_be_found.csv"],
+            config,
+        )
+        # Even though `not_to_be_found.csv` doesn't exist, it's not an error
+        # to try to delete it. This intentional behavior because AWS S3 doesn't
+        # return an error when trying to delete a non-existent object.
+        @test length(failed_entries) == 0
+
+        try
+            nbytes_read = get_object!(buffer, "test100B.csv", config)
+            @test false # should throw
+        catch e
+            @test e isa RustyObjectStore.GetException
+            @test occursin("not found", e.msg)
+        end
+    end
+
+end # Azurite.with
+
+end # @testitem
+
 # NOTE: PUT on azure always requires credentials, while GET on public containers doesn't
 @testitem "Basic BlobStorage usage (anonymous read enabled)" setup=[InitializeObjectStore, ReadWriteCases] begin
 using CloudBase.CloudTest: Azurite
