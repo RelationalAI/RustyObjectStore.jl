@@ -596,6 +596,13 @@ struct DeleteException <: RequestException
 
     DeleteException(msg) = new(msg, rust_message_to_reason(msg))
 end
+# Used for generic exceptions that are not specific to one of the to be deleted paths
+struct BulkDeleteException <: RequestException
+    msg::String
+    reason::ErrorReason
+
+    BulkDeleteException(msg) = new(msg, rust_message_to_reason(msg))
+end
 struct ListException <: RequestException
     msg::String
     reason::ErrorReason
@@ -983,6 +990,8 @@ function bulk_delete_objects(paths::Vector{String}, conf::AbstractConfig)
             sleep(0.01)
             continue
         end
+
+        @throw_on_error(response, "bulk_delete", BulkDeleteException)
 
         entries = if response.failed_count > 0
             raw_entries = unsafe_wrap(Array, response.failed_entries, response.failed_count)
