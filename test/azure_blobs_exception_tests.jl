@@ -257,6 +257,7 @@ Time:2018-06-14T16:46:54.6040685Z</Message></Error>\r
                 mock_config,
             )
             @test length(failed_entries) == 1
+            @test failed_entries[1].path == "b"
             @test occursin("Forbidden (code: 403)", first(failed_entries).error_message)
 
             # Corrupt response headers to generate a generic exception independent of the paths
