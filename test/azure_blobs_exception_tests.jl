@@ -701,6 +701,63 @@ end # @testitem
         return nrequests[]
     end
 
+    function test_invalid_block_list()
+        nrequests = Ref(0)
+        uploadid = nothing
+        (port, tcp_server) = Sockets.listenany(8081)
+        http_server = HTTP.serve!(tcp_server) do request::HTTP.Request
+            nrequests[] += 1
+            if request.method == "PUT"
+                if occursin("comp=blocklist", request.target)
+                    uploadid_value = HTTP.header(request, "x-ms-meta-uploadid")
+                    if !isnothing(uploadid_value)
+                        uploadid = "x-ms-meta-uploadid" => uploadid_value
+                    end
+                    return HTTP.Response(400, "InvalidBlockList")
+                else
+                    return HTTP.Response(200, [
+                        "Content-Length" => "0",
+                        "Last-Modified" => "Tue, 15 Oct 2019 12:45:26 GMT",
+                        "ETag" => "123"
+                    ], "")
+                end
+            elseif request.method == "HEAD"
+                return HTTP.Response(200, [
+                    uploadid,
+                    "Content-Length" => "0",
+                    "Last-Modified" => "Tue, 15 Oct 2019 12:45:26 GMT",
+                    "ETag" => "123"
+                ], "")
+            else
+                return HTTP.Response(404, "Not Found")
+            end
+        end
+
+        baseurl = "http://127.0.0.1:$port/$account/$container/"
+        conf = AzureConfig(;
+            storage_account_name=account,
+            container_name=container,
+            storage_account_key=shared_key_from_azurite,
+            host=baseurl,
+            opts=ClientOptions(;
+                max_retries=max_retries,
+                retry_timeout_secs=retry_timeout_secs,
+                request_timeout_secs
+            )
+        )
+
+        try
+            put_object(zeros(UInt8, 11 * 1024 * 1024), "blob", conf)
+            @test true
+        catch e
+            @test false
+        finally
+            Threads.@spawn HTTP.forceclose(http_server)
+        end
+        # wait(http_server)
+        return nrequests[]
+    end
+
     @testset "400: Bad Request" begin
         # Returned when there's an error in the request URI, headers, or body. The response body
         # contains an error message explaining what the specific problem is.
@@ -868,5 +925,10 @@ end # @testitem
     @testset "Cancellation" begin
         nrequests = test_cancellation()
         @test nrequests == 1
+    end
+
+    @testset "InvalidBlockList" begin
+        nrequests = test_invalid_block_list()
+        @test nrequests == 4
     end
 end

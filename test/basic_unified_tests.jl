@@ -558,7 +558,13 @@ function run_sanity_test_cases(read_config::AbstractConfig, write_config::Abstra
     end
 end
 
-function run_list_test_cases(config::AbstractConfig)
+function within_margin(a, b, margin = 32)
+    return all(abs.(a .- b) .<= margin)
+end
+
+
+function run_list_test_cases(config::AbstractConfig; strict_entry_size=true)
+    margin = strict_entry_size ? 0 : 32
     @testset "basic listing" begin
         for i in range(10; step=10, length=5)
             nbytes_written = put_object(codeunits(repeat('=', i)), "list/$(i).csv", config)
@@ -567,7 +573,7 @@ function run_list_test_cases(config::AbstractConfig)
 
         entries = list_objects("list/", config)
         @test length(entries) == 5
-        @test map(x -> x.size, entries) == range(10; step=10, length=5)
+        @test within_margin(map(x -> x.size, entries), range(10; step=10, length=5), margin)
         @test map(x -> x.location, entries) == ["list/10.csv", "list/20.csv", "list/30.csv", "list/40.csv", "list/50.csv"]
     end
 
@@ -587,7 +593,7 @@ function run_list_test_cases(config::AbstractConfig)
 
         entries = list_objects("other/prefix/", config)
         @test length(entries) == 5
-        @test map(x -> x.size, entries) == range(110; step=10, length=5)
+        @test within_margin(map(x -> x.size, entries), range(110; step=10, length=5), margin)
         @test map(x -> x.location, entries) ==
             ["other/prefix/110.csv", "other/prefix/120.csv", "other/prefix/130.csv", "other/prefix/140.csv", "other/prefix/150.csv"]
 
@@ -596,6 +602,10 @@ function run_list_test_cases(config::AbstractConfig)
 
         entries = list_objects("other/p/", config)
         @test length(entries) == 0
+
+        entries = list_objects("other/prefix/150.csv", config)
+        @test length(entries) == 1
+        @test map(x -> x.location, entries) == ["other/prefix/150.csv"]
     end
 
     @testset "list empty entries" begin
@@ -606,7 +616,7 @@ function run_list_test_cases(config::AbstractConfig)
 
         entries = list_objects("list_empty/", config)
         @test length(entries) == 3
-        @test map(x -> x.size, entries) == [0, 0, 0]
+        @test within_margin(sort(map(x -> x.size, entries)), [0, 0, 0], margin)
         @test map(x -> x.location, entries) == ["list_empty/10.csv", "list_empty/20.csv", "list_empty/30.csv"]
     end
 
@@ -629,7 +639,7 @@ function run_list_test_cases(config::AbstractConfig)
 
         append!(entries, one_entry)
 
-        @test sort(map(x -> x.size, entries)) == data
+        @test within_margin(sort(map(x -> x.size, entries)), data, margin)
         @test sort(map(x -> x.location, entries)) == sort(map(x -> "list/$(x).csv", data))
     end
 
@@ -667,7 +677,7 @@ function run_list_test_cases(config::AbstractConfig)
 
         @test isnothing(next_chunk!(stream))
 
-        @test sort(map(x -> x.size, entries)) == data[51:end]
+        @test within_margin(sort(map(x -> x.size, entries)), data[51:end], margin)
         @test sort(map(x -> x.location, entries)) == sort(map(x -> key(x), data[51:end]))
     end
 end
@@ -790,4 +800,72 @@ Minio.with(; debug=true, public=true) do conf
 
     run_read_write_test_cases(config_no_creds, config)
 end # Minio.with
+end # @testitem
+
+@testitem "Basic Snowflake Stage usage: AWS, non-encrypted" setup=[InitializeObjectStore, SnowflakeMock, ReadWriteCases] begin
+using CloudBase.CloudTest: Minio
+using RustyObjectStore: SnowflakeConfig, ClientOptions
+
+# For interactive testing, use Minio.run() instead of Minio.with()
+# conf, p = Minio.run(; debug=true, public=false); atexit(() -> kill(p))
+Minio.with(; debug=true, public=false) do conf
+    credentials, container = conf
+    with(SFGatewayMock(credentials, container, false)) do config::SnowflakeConfig
+        run_read_write_test_cases(config)
+        run_stream_test_cases(config)
+        run_list_test_cases(config)
+        run_sanity_test_cases(config)
+    end
+end # Minio.with
+end # @testitem
+
+@testitem "Basic Snowflake Stage usage: AWS, encrypted" setup=[InitializeObjectStore, SnowflakeMock, ReadWriteCases] begin
+using CloudBase.CloudTest: Minio
+using RustyObjectStore: SnowflakeConfig, ClientOptions
+
+# For interactive testing, use Minio.run() instead of Minio.with()
+# conf, p = Minio.run(; debug=true, public=false); atexit(() -> kill(p))
+Minio.with(; debug=true, public=false) do conf
+    credentials, container = conf
+    with(SFGatewayMock(credentials, container, true)) do config::SnowflakeConfig
+        run_read_write_test_cases(config)
+        run_stream_test_cases(config)
+        run_list_test_cases(config; strict_entry_size=false)
+        run_sanity_test_cases(config)
+    end
+end # Minio.with
+end # @testitem
+
+@testitem "Basic Snowflake Stage usage: Azure, non-encrypted" setup=[InitializeObjectStore, SnowflakeMock, ReadWriteCases] begin
+using CloudBase.CloudTest: Azurite
+using RustyObjectStore: SnowflakeConfig, ClientOptions
+
+# For interactive testing, use Azurite.run() instead of Azurite.with()
+# conf, p = Azurite.run(; debug=true, public=false); atexit(() -> kill(p))
+Azurite.with(; debug=true, public=false) do conf
+    credentials, container = conf
+    with(SFGatewayMock(credentials, container, false)) do config::SnowflakeConfig
+        run_read_write_test_cases(config)
+        run_stream_test_cases(config)
+        run_list_test_cases(config)
+        run_sanity_test_cases(config)
+    end
+end # Azurite.with
+end # @testitem
+
+@testitem "Basic Snowflake Stage usage: Azure, encrypted" setup=[InitializeObjectStore, SnowflakeMock, ReadWriteCases] begin
+using CloudBase.CloudTest: Azurite
+using RustyObjectStore: SnowflakeConfig, ClientOptions
+
+# For interactive testing, use Azurite.run() instead of Azurite.with()
+# conf, p = Azurite.run(; debug=true, public=false); atexit(() -> kill(p))
+Azurite.with(; debug=true, public=false) do conf
+    credentials, container = conf
+    with(SFGatewayMock(credentials, container, true)) do config::SnowflakeConfig
+        run_read_write_test_cases(config)
+        run_stream_test_cases(config)
+        run_list_test_cases(config; strict_entry_size=false)
+        run_sanity_test_cases(config)
+    end
+end # Azurite.with
 end # @testitem
