@@ -944,16 +944,16 @@ end
 """
     bulk_delete_objects(path, conf)
 
-Send a delete request to the object store.
+Send a bulk delete request to the object store.
 
 # Arguments
-- `path::String`: The location of the object to delete.
+- `paths::Vector{String}`: The locations of the objects to delete.
 - `conf::AbstractConfig`: The configuration to use for the request.
   It includes credentials and other client options.
 
 # Throws
-- `DeleteException`: If the request fails for any reason. Note that S3 will treat a delete request
-  to a non-existing object as a success, while Azure Blob will treat it as a 404 error.
+- `BulkDeleteException`: If the request fails for any reason.
+   Note that deletions of non-existing objects will be treated as success.
 """
 function bulk_delete_objects(paths::Vector{String}, conf::AbstractConfig)
     response = BulkResponseFFI()
@@ -962,27 +962,24 @@ function bulk_delete_objects(paths::Vector{String}, conf::AbstractConfig)
     handle = pointer_from_objref(event)
     config = into_config(conf)
     while true
-        preserve_task(ct)
-        # Convert Julia strings to Cstrings
-        c_paths = [Base.cconvert(Cstring, path) for path in paths]
-        # Create an array of pointers to the Cstrings
-        paths_array = [pointer(c_path) for c_path in c_paths]
-        result = GC.@preserve paths c_paths paths_array config response event try
-            # Pass a pointer to the array of pointers to the Cstrings
-            c_paths_ptr = pointer(paths_array)
-            result = @ccall rust_lib.bulk_delete(
-                c_paths_ptr::Ptr{Ptr{Cchar}},
-                length(paths)::Cuint,
-                config::Ref{Config},
-                response::Ref{BulkResponseFFI},
-                handle::Ptr{Cvoid}
-            )::Cint
+        result = GC.@preserve paths config response event begin
+            preserve_task(ct)
+            try
+                # Pass a pointer to the array of pointers to the Cstrings
+                result = @ccall rust_lib.bulk_delete(
+                    paths::Ptr{Ptr{Cchar}},
+                    length(paths)::Cuint,
+                    config::Ref{Config},
+                    response::Ref{BulkResponseFFI},
+                    handle::Ptr{Cvoid}
+                )::Cint
 
-            wait_or_cancel(event, response)
+                wait_or_cancel(event, response)
 
-            result
-        finally
-            unpreserve_task(ct)
+                result
+            finally
+                unpreserve_task(ct)
+            end
         end
 
         if result == 2
