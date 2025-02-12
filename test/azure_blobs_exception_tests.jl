@@ -1,7 +1,9 @@
 @testitem "Basic BlobStorage exceptions" setup=[InitializeObjectStore] begin
     using CloudBase.CloudTest: Azurite
-    import CloudBase
     using RustyObjectStore: RustyObjectStore, get_object!, put_object, ClientOptions, AzureConfig, AWSConfig
+    import CloudBase
+    import HTTP
+    import Sockets
 
     # For interactive testing, use Azurite.run() instead of Azurite.with()
     # conf, p = Azurite.run(; debug=true, public=false); atexit(() -> kill(p))
@@ -172,6 +174,112 @@
                 @test occursin("404 Not Found", e.msg)
                 @test occursin("The specified resource does not exist.", e.msg)
             end
+        end
+
+        @testset "bulk_delete_objects exceptions" begin
+            # We have to mock to simulate partial failures for some of the
+            # requested deletes
+crafted_res =
+"""--batchresponse_66925647-d0cb-4109-b6d3-28efe3e1e5ed\r
+Content-Type: application/http\r
+Content-ID: 0\r
+\r
+HTTP/1.1 202 Accepted\r
+x-ms-delete-type-permanent: true\r
+x-ms-request-id: 778fdc83-801e-0000-62ff-0334671e284f\r
+x-ms-version: 2018-11-09\r
+\r
+--batchresponse_66925647-d0cb-4109-b6d3-28efe3e1e5ed\r
+Content-Type: application/http\r
+Content-ID: 1\r
+\r
+HTTP/1.1 403 Forbidden\r
+Content-Length: 223\r
+Content-Type: application/xml\r
+Server: Microsoft-HTTPAPI/2.0\r
+x-ms-request-id: 12345678-90ab-cdef-1234-567890abcdef\r
+x-ms-version: 2021-12-02\r
+Date: Wed, 07 Feb 2025 12:34:56 GMT\r
+\r
+<?xml version="1.0" encoding="utf-8"?>\r
+<Error>\r
+    <Code>AuthorizationPermissionMismatch</Code>\r
+    <Message>\r
+        This request is not authorized to perform this operation using this permission.\r
+        RequestId: 12345678-90ab-cdef-1234-567890abcdef\r
+        Time: 2025-02-07T12:34:56.000Z\r
+    </Message>\r
+</Error>\r
+Time:2018-06-14T16:46:54.6040685Z</Message></Error>\r
+\r
+--batchresponse_66925647-d0cb-4109-b6d3-28efe3e1e5ed\r
+Content-Type: application/http\r
+Content-ID: 2\r
+\r
+HTTP/1.1 404 The specified blob does not exist.\r
+x-ms-error-code: BlobNotFound\r
+x-ms-request-id: 778fdc83-801e-0000-62ff-0334671e2852\r
+x-ms-version: 2018-11-09\r
+Content-Length: 216\r
+Content-Type: application/xml\r
+\r
+<?xml version=\"1.0\" encoding=\"utf-8\"?>\r
+<Error><Code>BlobNotFound</Code><Message>The specified blob does not exist.\r
+RequestId:778fdc83-801e-0000-62ff-0334671e2852\r
+Time:2018-06-14T16:46:54.6040685Z</Message></Error>\r
+--batchresponse_66925647-d0cb-4109-b6d3-28efe3e1e5ed--\r
+"""
+    headers = Ref([
+            "Transfer-Encoding" => "chunked",
+            "Content-Type" => "multipart/mixed; boundary=batchresponse_66925647-d0cb-4109-b6d3-28efe3e1e5ed",
+            "x-ms-request-id" => "778fdc83-801e-0000-62ff-033467000000",
+            "x-ms-version" => "2018-11-09",
+    ])
+            (port, tcp_server) = Sockets.listenany(8081)
+            http_server = HTTP.serve!(tcp_server) do request::HTTP.Request
+                return HTTP.Response(
+                    200,
+                    headers[],
+                    crafted_res,
+                )
+            end
+
+            mock_baseurl = "http://127.0.0.1:$port/account/container/"
+            mock_config = AzureConfig(;
+                storage_account_name=_credentials.auth.account,
+                container_name=_container.name,
+                storage_account_key=_credentials.auth.key,
+                host=mock_baseurl
+            )
+
+            failed_entries = RustyObjectStore.bulk_delete_objects(
+                ["a", "b", "c"],
+                mock_config,
+            )
+            @test length(failed_entries) == 1
+            @test failed_entries[1].path == "b"
+            @test occursin("Forbidden (code: 403)", first(failed_entries).error_message)
+
+            # Corrupt response headers to generate a generic exception independent of the paths
+            # we asked to delete
+            headers[] = []
+            try
+                failed_entries = RustyObjectStore.bulk_delete_objects(
+                    ["a", "b", "c"],
+                    mock_config,
+                )
+                # should throw because the response is invalid as it misses the
+                # Content-Type header
+                @test false
+            catch e
+                @test e isa RustyObjectStore.BulkDeleteException
+                @test occursin("Got invalid bulk delete response", e.msg)
+                @test e.reason == RustyObjectStore.UnknownError()
+            finally
+                close(http_server)
+            end
+            wait(http_server)
+            # Test
         end
     end # Azurite.with
     # Azurite is not running at this point
