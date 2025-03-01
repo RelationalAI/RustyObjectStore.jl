@@ -746,6 +746,13 @@ struct DeleteException <: RequestException
 
     DeleteException(msg) = new(msg, rust_message_to_reason(msg))
 end
+# Used for generic exceptions that are not specific to one of the to be deleted paths
+struct BulkDeleteException <: RequestException
+    msg::String
+    reason::ErrorReason
+
+    BulkDeleteException(msg) = new(msg, rust_message_to_reason(msg))
+end
 struct ListException <: RequestException
     msg::String
     reason::ErrorReason
@@ -1057,6 +1064,101 @@ function delete_object(path::String, conf::AbstractConfig)
         return nothing
     end
 end
+
+# =========================================================================================
+# Bulk Delete
+struct BulkFailedEntryFFI
+    path::Cstring
+    error_message::Cstring
+end
+
+struct BulkFailedEntry
+    path::String
+    error_message::String
+end
+
+function convert_bulk_failed_entry(entry::BulkFailedEntryFFI)
+    return BulkFailedEntry(
+        unsafe_string(entry.path),
+        unsafe_string(entry.error_message),
+    )
+end
+
+mutable struct BulkResponseFFI
+    result::Cint
+    failed_entries::Ptr{BulkFailedEntryFFI}
+    failed_count::Culonglong
+    error_message::Ptr{Cchar}
+    context::Ptr{Cvoid}
+
+    BulkResponseFFI() = new(-1, C_NULL, 0, C_NULL, C_NULL)
+end
+
+"""
+    bulk_delete_objects(path, conf)
+
+Send a bulk delete request to the object store.
+
+# Arguments
+- `paths::Vector{String}`: The locations of the objects to delete.
+- `conf::AbstractConfig`: The configuration to use for the request.
+  It includes credentials and other client options.
+
+# Throws
+- `BulkDeleteException`: If the request fails for any reason.
+   Note that deletions of non-existing objects will be treated as success.
+"""
+function bulk_delete_objects(paths::Vector{String}, conf::AbstractConfig)
+    response = BulkResponseFFI()
+    ct = current_task()
+    event = Base.Event()
+    handle = pointer_from_objref(event)
+    config = into_config(conf)
+    while true
+        result = GC.@preserve paths config response event begin
+            preserve_task(ct)
+            try
+                # Pass a pointer to the array of pointers to the Cstrings
+                result = @ccall rust_lib.bulk_delete(
+                    paths::Ptr{Ptr{Cchar}},
+                    length(paths)::Cuint,
+                    config::Ref{Config},
+                    response::Ref{BulkResponseFFI},
+                    handle::Ptr{Cvoid}
+                )::Cint
+
+                wait_or_cancel(event, response)
+
+                result
+            finally
+                unpreserve_task(ct)
+            end
+        end
+
+        if result == 2
+            # backoff
+            sleep(0.01)
+            continue
+        end
+
+        @throw_on_error(response, "bulk_delete", BulkDeleteException)
+
+        entries = if response.failed_count > 0
+            raw_entries = unsafe_wrap(Array, response.failed_entries, response.failed_count)
+            vector = map(convert_bulk_failed_entry, raw_entries)
+            @ccall rust_lib.destroy_bulk_failed_entries(
+                response.failed_entries::Ptr{BulkFailedEntryFFI},
+                response.failed_count::Culonglong
+            )::Cint
+            vector
+        else
+            Vector{BulkFailedEntry}[]
+        end
+
+        return entries
+    end
+end
+# =========================================================================================
 
 mutable struct ReadResponseFFI
     result::Cint
