@@ -14,6 +14,8 @@ using DocStringExtensions
 using object_store_ffi_jll
 using JSON3
 
+using Arrow
+
 const Option{T} = Union{T, Nothing}
 
 const rust_lib = if haskey(ENV, "OBJECT_STORE_LIB")
@@ -2108,6 +2110,141 @@ function invalidate_config(conf::Option{AbstractConfig}=nothing)
         return true
     end
 end
+
+function test_query(buffer::AbstractVector{UInt8}, query::String, conf::AbstractConfig)
+    response = Response()
+    size = length(buffer)
+    ct = current_task()
+    event = Base.Event()
+    handle = pointer_from_objref(event)
+    config = into_config(conf)
+    while true
+        preserve_task(ct)
+        result = GC.@preserve buffer config response event try
+            result = @ccall rust_lib.test_query(
+                query::Cstring,
+                buffer::Ref{Cuchar},
+                size::Culonglong,
+                config::Ref{Config},
+                response::Ref{Response},
+                handle::Ptr{Cvoid}
+            )::Cint
+
+            wait_or_cancel(event, response)
+
+            result
+        finally
+            unpreserve_task(ct)
+        end
+
+        if result == 2
+            # backoff
+            sleep(0.01)
+            continue
+        end
+
+        @throw_on_error(response, "test_query", GetException)
+
+        return Int(response.length)
+    end
+end
+
+
+mutable struct QueryStreamResponseFFI
+    result::Cint
+    stream::Ptr{Nothing}
+    error_message::Ptr{Cchar}
+    context::Ptr{Cvoid}
+
+    QueryStreamResponseFFI() = new(-1, C_NULL, C_NULL, C_NULL)
+end
+
+struct QueryStream
+    ptr::Ptr{Nothing}
+end
+
+function test_query_stream(query::String, conf::AbstractConfig)
+    response = QueryStreamResponseFFI()
+    ct = current_task()
+    event = Base.Event()
+    handle = pointer_from_objref(event)
+    config = into_config(conf)
+    while true
+        preserve_task(ct)
+        result = GC.@preserve config response event try
+            result = @ccall rust_lib.test_query_stream(
+                query::Cstring,
+                config::Ref{Config},
+                response::Ref{QueryStreamResponseFFI},
+                handle::Ptr{Cvoid}
+            )::Cint
+
+            wait_or_cancel(event, response)
+
+            result
+        finally
+            unpreserve_task(ct)
+        end
+
+        if result == 2
+            # backoff
+            sleep(0.01)
+            continue
+        end
+
+        @throw_on_error(response, "test_query_stream", GetException)
+
+        return QueryStream(response.stream)
+    end
+end
+
+mutable struct NextDataChunkResponseFFI
+    result::Cint
+    buffer::Ptr{Cuchar}
+    length::Culonglong
+    error_message::Ptr{Cchar}
+    context::Ptr{Cvoid}
+
+    NextDataChunkResponseFFI() = new(-1, C_NULL, 0, C_NULL, C_NULL)
+end
+
+function next_chunk(query_stream::QueryStream)
+    response = NextDataChunkResponseFFI()
+    ct = current_task()
+    event = Base.Event()
+    handle = pointer_from_objref(event)
+    while true
+        preserve_task(ct)
+        result = GC.@preserve response event try
+            result = @ccall rust_lib.next_chunk(
+                query_stream.ptr::Ptr{Nothing},
+                response::Ref{NextDataChunkResponseFFI},
+                handle::Ptr{Cvoid}
+            )::Cint
+
+            wait_or_cancel(event, response)
+
+            result
+        finally
+            unpreserve_task(ct)
+        end
+
+        if result == 2
+            # backoff
+            sleep(0.01)
+            continue
+        end
+
+        @throw_on_error(response, "next_chunk", GetException)
+
+        if response.length == 0
+            return nothing
+        else
+            return Arrow.Table(unsafe_wrap(Array, response.buffer, response.length; own=true))
+        end
+    end
+end
+
 
 function current_metrics()
     metrics_ptr = @ccall rust_lib.current_metrics()::Ptr{Cchar}

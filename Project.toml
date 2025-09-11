@@ -3,6 +3,7 @@ uuid = "1b5eed3d-1f46-4baa-87f3-a4a892b23610"
 version = "0.12.3"
 
 [deps]
+Arrow = "69666777-d1a9-59fb-9406-91d4454c9d45"
 Base64 = "2a0f44e3-6c83-55bd-87e4-b1978d98bd5f"
 CloudBase = "85eb1798-d7c4-4918-bb13-c944d38e27ed"
 DocStringExtensions = "ffbed154-4ef7-542d-bbb7-c09d3a79fcae"
@@ -12,6 +13,7 @@ Sockets = "6462fe0b-24de-5631-8697-dd941f90decc"
 object_store_ffi_jll = "0e112785-0821-598c-8835-9f07837e8d7b"
 
 [compat]
+Arrow = "2.8.0"
 CloudBase = "1"
 DocStringExtensions = "0.9"
 HTTP = "1"
